@@ -1,0 +1,2814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Waterfall Chart Builder</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@300;400;500;600;700&family=Source+Serif+4:ital,wght@0,300;0,400;0,600;1,300&display=swap');
+
+:root {
+  --bg: #f5f4f0;
+  --panel: #ffffff;
+  --panel2: #f8f7f4;
+  --border: #e0ddd7;
+  --border2: #cccac3;
+  --accent: #1a3a5c;
+  --accent-light: #e8eef5;
+  --text: #1c1c1e;
+  --text-mid: #4a4a52;
+  --text-muted: #8a8a94;
+  --positive: #2a7a4b;
+  --negative: #b8352a;
+  --anchor: #1a3a5c;
+  --subtotal: #5a4a8a;
+  --plug: #7a6a5a;
+  --sidebar-w: 300px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  font-family: 'Libre Franklin', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+/* ─── LAYOUT ─────────────────────────── */
+.app {
+  display: grid;
+  grid-template-rows: 44px 1fr;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.topbar {
+  grid-column: 1 / -1;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 16px;
+}
+
+.topbar-logo {
+  font-family: 'Source Serif 4', serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.9);
+  letter-spacing: 0.02em;
+}
+
+.topbar-sep { width:1px; height:18px; background:rgba(255,255,255,0.2); }
+
+.topbar-hint {
+  font-size: 11px;
+  color: rgba(255,255,255,0.42);
+  font-weight: 300;
+}
+
+.topbar-actions { margin-left: auto; display: flex; gap: 8px; }
+
+.tbtn {
+  font-family: 'Libre Franklin', sans-serif;
+  font-size: 11px; font-weight: 500;
+  padding: 5px 14px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.85);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tbtn:hover { background: rgba(255,255,255,0.16); }
+.tbtn.primary { background: rgba(255,255,255,0.9); color: var(--accent); border-color: transparent; }
+.tbtn.primary:hover { background: #fff; }
+
+/* ─── SIDEBAR RESIZER ─────────────────── */
+.sidebar-resizer {
+  position: absolute; top: 0; right: -3px;
+  width: 6px; height: 100%;
+  cursor: col-resize; z-index: 10;
+  background: transparent;
+  transition: background 0.15s;
+}
+.sidebar-resizer:hover, .sidebar-resizer.dragging {
+  background: var(--accent);
+  opacity: 0.3;
+}
+.sidebar { position: relative; }
+
+/* ─── SIDEBAR ─────────────────────────── */
+.sidebar {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.stab {
+  flex: 1; padding: 10px 4px;
+  font-size: 10.5px; font-weight: 500;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-muted);
+  background: none; border: none; cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s; text-align: center;
+}
+.stab:hover { color: var(--text-mid); }
+.stab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.sidebar-content { flex: 1; overflow-y: auto; }
+
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
+
+/* ─── DATA TABLE ─────────────────────── */
+.data-section { padding: 8px 8px 0; border-bottom: 1px solid var(--border); }
+
+.tbl { border-collapse: collapse; table-layout: fixed; }
+/* Table width set via JS to fill data-section */
+
+.tbl thead th {
+  font-size: 9.5px; font-weight: 600;
+  letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 4px 6px;
+  border-bottom: 2px solid var(--border);
+  text-align: left;
+  position: relative;
+  overflow: hidden;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* Visible column separator on right edge of Label and Value headers */
+#thLabel, #thVal {
+  border-right: none;
+}
+
+/* Column resize handle — centered on the column boundary */
+.col-resizer {
+  position: absolute; top: 0; right: -4px;
+  width: 8px; height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+  display: flex; align-items: center; justify-content: center;
+}
+.col-resizer::after {
+  content: '';
+  width: 2px; height: 55%;
+  border-radius: 2px;
+  background: var(--border2);
+  transition: background 0.15s, height 0.15s, width 0.15s;
+}
+.col-resizer:hover::after, .col-resizer.dragging::after {
+  background: var(--accent);
+  height: 75%;
+  width: 3px;
+}
+
+.tbl tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+.tbl tbody tr:hover { background: var(--panel2); }
+.tbl tbody tr.dragging { opacity: 0.3; }
+.tbl tbody tr.drag-target { box-shadow: inset 0 -2px 0 var(--accent); }
+
+.tbl td { padding: 1px 2px; vertical-align: middle; }
+
+.tbl input[type=text], .tbl input[type=number] {
+  width: 100%;
+  border: none; background: transparent;
+  color: var(--text);
+  font-family: 'Libre Franklin', sans-serif;
+  font-size: 12px; padding: 5px 6px;
+  outline: none; border-radius: 3px;
+  transition: background 0.1s;
+}
+.tbl input:focus { background: var(--accent-light); }
+.tbl input[type=number] { text-align: right; }
+.tbl input:disabled { color: var(--text-muted); font-style: italic; }
+
+.type-sel {
+  appearance: none; border: none; background: transparent;
+  cursor: pointer; font-size: 10px; color: var(--text-mid);
+  padding: 4px 0; outline: none;
+  font-family: 'Libre Franklin', sans-serif; width: 100%;
+  max-width: 62px;
+}
+
+.del-btn {
+  background: none; border: none; color: var(--border2);
+  cursor: pointer; font-size: 14px; line-height: 1;
+  padding: 2px 3px; border-radius: 3px; transition: color 0.15s;
+}
+.del-btn:hover { color: var(--negative); }
+
+.drag-grip {
+  color: var(--border2); font-size: 14px;
+  padding: 2px 4px; cursor: grab; user-select: none;
+  border-radius: 3px; display: inline-block;
+}
+.drag-grip:hover { color: var(--accent); background: var(--accent-light); }
+.drag-grip:active { cursor: grabbing; }
+
+.row-actions {
+  display: flex; gap: 2px; padding: 6px;
+  border-top: 1px solid var(--border); flex-wrap: wrap;
+}
+
+.radd {
+  font-size: 10px; font-weight: 500;
+  padding: 4px 7px; border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--panel2); color: var(--text-mid);
+  cursor: pointer; transition: all 0.15s;
+}
+.radd:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+
+/* ─── TIE-OUT TOGGLE ─────────────────── */
+.tieout-block {
+  border-top: 2px solid var(--border);
+  padding: 10px 8px 8px;
+  background: var(--panel2);
+}
+
+.tieout-label-row {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 6px;
+}
+
+.tieout-mode-label {
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-mid); flex: 1;
+}
+
+.mode-pill {
+  display: flex; border-radius: 5px; overflow: hidden;
+  border: 1px solid var(--border2);
+  flex-shrink: 0;
+}
+
+.mode-pill-btn {
+  font-family: 'Libre Franklin', sans-serif;
+  font-size: 10px; font-weight: 600;
+  padding: 4px 9px;
+  border: none; background: var(--panel); color: var(--text-muted);
+  cursor: pointer; transition: all 0.15s; letter-spacing: 0.02em;
+}
+.mode-pill-btn:first-child { border-right: 1px solid var(--border2); }
+.mode-pill-btn.active { background: var(--accent); color: #fff; }
+
+.tieout-fields {
+  display: flex; flex-direction: column; gap: 5px;
+}
+
+.tieout-field-row {
+  display: flex; align-items: center; gap: 6px;
+}
+
+.tieout-field-label {
+  font-size: 10px; color: var(--text-muted);
+  white-space: nowrap; min-width: 62px;
+}
+
+.tieout-input {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-family: 'Libre Franklin', sans-serif;
+  font-size: 11px; padding: 4px 7px;
+  border-radius: 3px; outline: none;
+  transition: border-color 0.15s;
+}
+.tieout-input:focus { border-color: var(--accent); }
+
+.tieout-hint {
+  font-size: 9.5px; color: var(--text-muted);
+  line-height: 1.45; font-style: italic;
+  margin-top: 2px;
+}
+
+/* ─── GROUPINGS TAB ──────────────────── */
+.groups-section { padding: 12px; border-bottom: 1px solid var(--border); }
+
+.groups-hint {
+  font-size: 10px; color: var(--text-muted);
+  line-height: 1.5; margin-bottom: 10px;
+}
+
+.group-card {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.group-header {
+  display: flex; align-items: center;
+  padding: 6px 8px; gap: 6px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.group-name-input {
+  flex: 1;
+  border: none; background: transparent;
+  font-family: 'Libre Franklin', sans-serif;
+  font-size: 12px; font-weight: 500;
+  color: var(--text); outline: none;
+  padding: 2px 4px; border-radius: 3px;
+  border: 1px dashed transparent;
+  transition: border-color 0.15s;
+}
+.group-name-input:hover { border-color: var(--border2); }
+.group-name-input:focus { border-color: var(--accent); background: var(--accent-light); }
+
+.group-color-input { display: none; } /* replaced by custom picker */
+
+.group-del {
+  background: none; border: none; color: var(--border2);
+  cursor: pointer; font-size: 14px; line-height: 1;
+  padding: 2px 4px; transition: color 0.15s;
+}
+.group-del:hover { color: var(--negative); }
+
+.group-body { padding: 8px; }
+
+.group-row-list { margin-bottom: 6px; }
+
+.group-row-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 4px; border-radius: 3px;
+  font-size: 11px; color: var(--text-mid);
+}
+.group-row-item:hover { background: var(--panel); }
+
+.group-row-item input[type=checkbox] {
+  accent-color: var(--accent);
+  width: 13px; height: 13px;
+  flex-shrink: 0; cursor: pointer;
+}
+
+.group-row-item label { cursor: pointer; flex: 1; }
+
+.group-empty {
+  font-size: 11px; color: var(--text-muted);
+  font-style: italic; padding: 4px;
+}
+
+.add-group-btn {
+  width: 100%;
+  padding: 7px;
+  background: transparent;
+  border: 1px dashed var(--border2);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-family: 'Libre Franklin', sans-serif;
+  font-size: 11px; cursor: pointer;
+  transition: all 0.15s;
+  margin-top: 4px;
+}
+.add-group-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+
+/* ─── PASTE ──────────────────────────── */
+.paste-section { padding: 12px; }
+
+.paste-section label {
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-muted); display: block; margin-bottom: 6px;
+}
+
+.paste-ta {
+  width: 100%; min-height: 90px;
+  background: var(--panel2); border: 1px solid var(--border);
+  color: var(--text);
+  font-family: monospace; font-size: 11px;
+  padding: 8px; border-radius: 4px; resize: vertical;
+  outline: none; transition: border-color 0.15s;
+}
+.paste-ta:focus { border-color: var(--accent); }
+.paste-ta::placeholder { color: var(--text-muted); }
+
+.paste-hint {
+  font-size: 10px; color: var(--text-muted);
+  line-height: 1.5; margin: 5px 0 8px;
+}
+
+.import-btn {
+  width: 100%; padding: 7px;
+  background: var(--accent); color: white;
+  border: none; border-radius: 4px;
+  font-family: 'Libre Franklin', sans-serif;
+  font-size: 11px; font-weight: 500;
+  cursor: pointer; transition: opacity 0.15s;
+}
+.import-btn:hover { opacity: 0.88; }
+
+/* ─── STYLE TAB ──────────────────────── */
+.ctrl-section { border-bottom: 1px solid var(--border); padding: 12px; }
+
+.ctrl-section-title {
+  font-size: 9.5px; font-weight: 600;
+  letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--text-muted); margin-bottom: 10px;
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; user-select: none;
+}
+
+.ctrl-chevron { transition: transform 0.2s; font-size: 9px; }
+.ctrl-chevron.closed { transform: rotate(-90deg); }
+.ctrl-body.closed { display: none; }
+
+.ctrl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cg { display: flex; flex-direction: column; gap: 3px; }
+.cg.full { grid-column: 1 / -1; }
+
+.clabel {
+  font-size: 9.5px; font-weight: 500;
+  color: var(--text-muted); letter-spacing: 0.04em;
+}
+
+.cinput {
+  border: 1px solid var(--border); background: var(--panel2);
+  color: var(--text);
+  font-family: 'Libre Franklin', sans-serif;
+  font-size: 12px; padding: 5px 7px;
+  border-radius: 4px; outline: none; width: 100%;
+  transition: border-color 0.15s;
+}
+.cinput:focus { border-color: var(--accent); }
+.cinput[type=color] { padding: 2px 4px; height: 30px; cursor: pointer; }
+.cinput[type=range] { padding: 0; height: 18px; accent-color: var(--accent); }
+
+/* Hex field sits below the color swatch - hidden by default, shown on color focus */
+.color-hex-inline { display: none; }
+
+/* ─── CUSTOM COLOR PICKER ────────────── */
+.cp-swatch {
+  width: 100%; height: 30px;
+  border: 1px solid var(--border); border-radius: 4px;
+  cursor: pointer; position: relative; overflow: hidden;
+  background: #3a9e65;
+  transition: border-color 0.15s;
+}
+.cp-swatch:hover { border-color: var(--accent); }
+.cp-swatch-inner {
+  position: absolute; inset: 0;
+}
+
+/* Popover panel */
+.cp-popover {
+  position: fixed;
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  padding: 10px;
+  z-index: 9999;
+  width: 216px;
+  display: none;
+}
+.cp-popover.open { display: block; }
+
+/* SV gradient canvas */
+.cp-canvas {
+  width: 196px; height: 140px;
+  border-radius: 4px;
+  cursor: crosshair;
+  display: block;
+  margin-bottom: 8px;
+}
+
+/* Hue slider */
+.cp-hue {
+  width: 196px; height: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 8px;
+  background: linear-gradient(to right,
+    #f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00);
+  position: relative;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.cp-hue::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: white;
+  border: 2px solid rgba(0,0,0,0.3);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  cursor: pointer;
+}
+.cp-hue::-moz-range-thumb {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: white;
+  border: 2px solid rgba(0,0,0,0.3);
+  cursor: pointer;
+}
+
+/* RGB + hex row */
+.cp-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 4px;
+  margin-top: 2px;
+}
+.cp-field {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+}
+.cp-field input {
+  width: 100%; text-align: center;
+  border: 1px solid var(--border); background: var(--panel2);
+  color: var(--text); font-family: 'Libre Franklin', sans-serif;
+  font-size: 11px; padding: 3px 2px;
+  border-radius: 3px; outline: none;
+  transition: border-color 0.15s;
+}
+.cp-field input:focus { border-color: var(--accent); }
+.cp-field input.invalid { border-color: var(--negative); }
+.cp-field-label {
+  font-size: 9px; color: var(--text-muted);
+  font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+}
+/* Hex field spans all 4 columns */
+.cp-hex-row {
+  margin-top: 6px;
+}
+.cp-hex-row input {
+  width: 100%; text-align: center;
+  border: 1px solid var(--border); background: var(--panel2);
+  color: var(--text); font-family: monospace;
+  font-size: 11px; padding: 4px 6px;
+  border-radius: 3px; outline: none;
+  transition: border-color 0.15s;
+}
+.cp-hex-row input:focus { border-color: var(--accent); }
+.cp-hex-row input.invalid { border-color: var(--negative); }
+.cp-hex-label {
+  font-size: 9px; color: var(--text-muted);
+  font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  display: block; text-align: center; margin-bottom: 2px;
+}
+
+/* Group color dot (small swatch in group header) */
+.group-color-dot {
+  width: 18px; height: 18px;
+  border-radius: 50%; flex-shrink: 0;
+  cursor: pointer; position: relative;
+  border: 2px solid rgba(0,0,0,0.15);
+  transition: transform 0.1s;
+}
+.group-color-dot:hover { transform: scale(1.15); }
+
+.cval {
+  font-size: 10px; color: var(--accent);
+  min-width: 32px; text-align: right; font-weight: 500;
+}
+
+.rrow { display: flex; align-items: center; gap: 6px; }
+
+.toggle-row {
+  display: flex; align-items: center;
+  justify-content: space-between; padding: 3px 0;
+}
+.toggle-label { font-size: 12px; color: var(--text-mid); }
+
+.tog { position: relative; width: 32px; height: 18px; }
+.tog input { display: none; }
+.tog-slider {
+  position: absolute; inset: 0;
+  background: var(--border2); border-radius: 18px;
+  cursor: pointer; transition: background 0.18s;
+}
+.tog-slider::before {
+  content: '';
+  position: absolute;
+  width: 12px; height: 12px; left: 3px; top: 3px;
+  background: white; border-radius: 50%;
+  transition: transform 0.18s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.tog input:checked + .tog-slider { background: var(--accent); }
+.tog input:checked + .tog-slider::before { transform: translateX(14px); }
+
+/* ─── CHART AREA ─────────────────────── */
+.chart-area {
+  display: flex; flex-direction: column;
+  padding: 16px 20px 12px;
+  overflow: hidden; gap: 8px; min-height: 0;
+}
+
+.stat-bar {
+  display: flex; gap: 12px; align-items: center;
+  flex-shrink: 0; flex-wrap: wrap;
+}
+
+.stat { font-size: 11px; color: var(--text-muted); }
+.stat strong { font-weight: 600; font-size: 12px; margin-left: 4px; }
+.stat.pos strong { color: var(--positive); }
+.stat.neg strong { color: var(--negative); }
+
+.chart-frame {
+  flex: 1; min-height: 0;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04);
+  padding: 16px 20px 10px;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+
+.chart-title-input {
+  font-family: 'Source Serif 4', serif;
+  font-size: 18px; font-weight: 600; color: var(--text);
+  border: none; background: transparent; outline: none;
+  width: 100%; padding: 2px 4px; border-radius: 3px;
+  border: 1px dashed transparent; transition: border-color 0.15s;
+  line-height: 1.3;
+}
+.chart-title-input:hover { border-color: var(--border2); }
+.chart-title-input:focus { border-color: var(--accent); background: var(--accent-light); }
+.chart-title-input::placeholder { color: var(--border2); font-style: italic; }
+
+.chart-subtitle-input {
+  font-family: 'Libre Franklin', sans-serif;
+  font-size: 12px; font-weight: 300; color: var(--text-muted);
+  border: none; background: transparent; outline: none;
+  width: 100%; padding: 1px 4px; border-radius: 3px;
+  border: 1px dashed transparent; transition: border-color 0.15s;
+}
+.chart-subtitle-input:hover { border-color: var(--border2); }
+.chart-subtitle-input:focus { border-color: var(--accent); background: var(--accent-light); }
+.chart-subtitle-input::placeholder { color: var(--border); font-style: italic; }
+
+.chart-canvas-wrap {
+  flex: 1; min-height: 0; position: relative;
+}
+
+canvas#wChart {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.chart-footnote-input {
+  font-size: 10px; color: var(--text-muted);
+  border: none; background: transparent; outline: none;
+  width: 100%; padding: 2px 4px;
+  border: 1px dashed transparent; border-radius: 3px;
+  transition: border-color 0.15s;
+  font-family: 'Libre Franklin', sans-serif;
+  margin-top: 4px; flex-shrink: 0;
+}
+.chart-footnote-input:hover { border-color: var(--border2); }
+.chart-footnote-input:focus { border-color: var(--accent); }
+.chart-footnote-input::placeholder { color: var(--border); font-style: italic; }
+
+.legend-row {
+  display: flex; gap: 16px; align-items: center;
+  flex-shrink: 0; margin-top: 2px; flex-wrap: wrap;
+}
+
+.legend-item {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 10px; color: var(--text-muted);
+  font-weight: 500;
+}
+
+.legend-swatch {
+  width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0;
+}
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+/* ─── MODAL ──────────────────────────── */
+.modal-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 1000;
+  align-items: center; justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+
+.modal {
+  background: var(--panel);
+  border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.22);
+  padding: 24px 24px 20px;
+  width: 340px;
+  max-width: 94vw;
+}
+
+.modal-title {
+  font-family: 'Source Serif 4', serif;
+  font-size: 15px; font-weight: 600;
+  color: var(--text); margin-bottom: 14px;
+}
+
+.modal-label {
+  font-size: 11px; font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.06em; text-transform: uppercase;
+  display: block; margin-bottom: 5px;
+}
+
+.modal-input {
+  width: 100%;
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: 'Libre Franklin', sans-serif;
+  font-size: 13px; color: var(--text);
+  background: var(--panel2);
+  outline: none; transition: border-color 0.15s;
+  margin-bottom: 16px;
+}
+.modal-input:focus { border-color: var(--accent); background: white; }
+
+.modal-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+}
+
+.modal-btn {
+  font-family: 'Libre Franklin', sans-serif;
+  font-size: 12px; font-weight: 500;
+  padding: 7px 16px; border-radius: 4px;
+  cursor: pointer; transition: all 0.15s;
+}
+.modal-btn.cancel {
+  border: 1px solid var(--border); background: var(--panel2); color: var(--text-mid);
+}
+.modal-btn.cancel:hover { border-color: var(--border2); }
+.modal-btn.saveas {
+  border: 1px solid var(--border2); background: var(--panel); color: var(--text-mid);
+}
+.modal-btn.saveas:hover { border-color: var(--accent); color: var(--accent); }
+.modal-btn.save {
+  border: none; background: var(--accent); color: white;
+}
+.modal-btn.save:hover { background: #254f7a; }
+
+/* ─── SAVED CHARTS TAB ───────────────── */
+.saved-section { padding: 12px; }
+
+.saved-empty {
+  text-align: center; padding: 32px 12px;
+  color: var(--text-muted); font-size: 12px;
+  line-height: 1.6;
+}
+
+.saved-list { display: flex; flex-direction: column; gap: 8px; }
+
+.saved-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel2);
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+  overflow: hidden;
+}
+.saved-card:hover { border-color: var(--accent); background: var(--accent-light); }
+.saved-card:hover .saved-del { opacity: 1; }
+
+.saved-thumb {
+  width: 100%; height: 72px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+.saved-thumb img {
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: top left;
+  display: block;
+}
+.saved-thumb-empty {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; color: var(--text-muted); font-style: italic;
+}
+
+.saved-card-body {
+  padding: 7px 28px 7px 10px;
+}
+
+.saved-card-name {
+  font-size: 12px; font-weight: 600;
+  color: var(--text); margin-bottom: 2px;
+}
+
+.saved-current-badge {
+  font-size: 9px; color: var(--accent); font-weight: 700;
+}
+
+.saved-card-meta {
+  font-size: 10px; color: var(--text-muted);
+}
+
+.saved-del {
+  position: absolute; top: 6px; right: 6px;
+  background: rgba(255,255,255,0.85); border: 1px solid var(--border);
+  color: var(--text-muted); font-size: 13px;
+  cursor: pointer; opacity: 0;
+  transition: all 0.15s; padding: 1px 5px;
+  border-radius: 3px; line-height: 1.4;
+}
+.saved-del:hover { color: var(--negative); border-color: var(--negative); background: white; }
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- TOPBAR -->
+<header class="topbar">
+  <span class="topbar-logo">Waterfall</span>
+  <div class="topbar-sep"></div>
+  <span class="topbar-hint">Click chart title to edit · drag rows to reorder · paste from spreadsheet</span>
+  <div class="topbar-actions">
+    <button class="tbtn" onclick="openSaveModal()">💾 Save</button>
+    <button class="tbtn" onclick="exportPNG()">Export PNG</button>
+    <button class="tbtn primary" onclick="clearAll()">Clear All</button>
+  </div>
+</header>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sidebar-resizer" id="sidebarResizer"></div>
+  <div class="sidebar-tabs">
+    <button class="stab active" onclick="switchTab('data',this)">Data</button>
+    <button class="stab" onclick="switchTab('groups',this)">Groups</button>
+    <button class="stab" onclick="switchTab('paste',this)">Paste</button>
+    <button class="stab" onclick="switchTab('style',this)">Style</button>
+    <button class="stab" onclick="switchTab('saved',this)">Saved</button>
+  </div>
+
+  <div class="sidebar-content">
+
+    <!-- DATA TAB -->
+    <div class="tab-pane active" id="tab-data">
+      <div class="data-section">
+        <table class="tbl" id="dataTable">
+          <colgroup>
+            <col id="colGrip" style="width:20px">
+            <col id="colLabel" style="width:120px">
+            <col id="colVal" style="width:90px">
+            <col id="colType" style="width:62px">
+            <col id="colDel" style="width:20px">
+          </colgroup>
+          <thead>
+            <tr>
+              <th></th>
+              <th id="thLabel">Label<span class="col-resizer" id="resizerLabel"></span></th>
+              <th id="thVal" style="text-align:right">Value<span class="col-resizer" id="resizerVal"></span></th>
+              <th>Type</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tblBody"></tbody>
+        </table>
+      </div>
+      <div class="row-actions">
+        <button class="radd" onclick="addRow('positive')">+ Increase</button>
+        <button class="radd" onclick="addRow('negative')">+ Decrease</button>
+        <button class="radd" onclick="addRow('anchor')">+ Anchor</button>
+        <button class="radd" onclick="addRow('subtotal')">+ Subtotal</button>
+      </div>
+
+      <!-- TIE-OUT MODE TOGGLE -->
+      <div class="tieout-block">
+        <div class="tieout-label-row">
+          <span class="tieout-mode-label">End Value Mode</span>
+          <div class="mode-pill">
+            <button class="mode-pill-btn active" id="btnTieOut" onclick="setTieOutMode(true)">Tie-Out</button>
+            <button class="mode-pill-btn" id="btnFreeForm" onclick="setTieOutMode(false)">Free-Form</button>
+          </div>
+        </div>
+        <div class="tieout-fields" id="tieoutFields">
+          <div class="tieout-field-row">
+            <span class="tieout-field-label">End value</span>
+            <input class="tieout-input" type="number" id="tieoutEndVal" value="10500"
+              oninput="onTieoutEndValInput(this.value)" placeholder="e.g. 10000">
+          </div>
+          <div class="tieout-field-row">
+            <span class="tieout-field-label">End label</span>
+            <input class="tieout-input" type="text" id="tieoutEndLabel" value="FY24 Revenue"
+              oninput="onTieoutEndLabelInput(this.value)" placeholder="e.g. FY24 Revenue">
+          </div>
+          <div class="tieout-field-row">
+            <span class="tieout-field-label">Plug label</span>
+            <input class="tieout-input" type="text" id="tieoutPlugLabel" value="All other, net"
+              oninput="plugLabel=this.value;renderGroups();updateChart()" placeholder="All other, net">
+          </div>
+          <div class="tieout-hint" id="tieoutHint"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GROUPS TAB -->
+    <div class="tab-pane" id="tab-groups">
+      <div class="groups-section">
+        <p class="groups-hint">Groups draw a bracket below the chart axis spanning the selected bars. Each group shows a label and the net sum of its bars. Anchors and subtotals are excluded from the group sum.</p>
+        <div id="groupList"></div>
+        <button class="add-group-btn" onclick="addGroup()">+ Add Group</button>
+      </div>
+    </div>
+
+    <!-- PASTE TAB -->
+    <div class="tab-pane" id="tab-paste">
+      <div class="paste-section">
+        <label>Paste from Spreadsheet</label>
+        <textarea class="paste-ta" id="pasteTA" placeholder="Paste two columns:&#10;&#10;FY23 Revenue    8400&#10;Volume Growth   1200&#10;Price Increase  620&#10;FX Impact      -480&#10;Net Income      anchor"></textarea>
+        <p class="paste-hint">Two columns: Label then Value. Use "anchor" or "total" in the value column to set keyword anchors. Negatives become red bars automatically.<br><br>If your last row is an anchor with a real number (e.g. "FY24 Revenue  10130"), the chart auto-switches to Tie-Out mode and inserts a plug bar. If it's a keyword anchor, Free-Form mode is used.</p>
+        <button class="import-btn" onclick="parsePaste()">Import ↵</button>
+      </div>
+    </div>
+
+    <!-- STYLE TAB -->
+    <div class="tab-pane" id="tab-style">
+
+      <div class="ctrl-section">
+        <div class="ctrl-section-title" onclick="toggleCtrl(this)">Format <span class="ctrl-chevron">▾</span></div>
+        <div class="ctrl-body">
+          <div class="ctrl-grid">
+            <div class="cg">
+              <span class="clabel">Number Format</span>
+              <select class="cinput" id="numFormat" onchange="updateChart()">
+                <option value="number">Number</option>
+                <option value="currency" selected>Currency ($)</option>
+                <option value="currency_gbp">Currency (£)</option>
+                <option value="currency_eur">Currency (€)</option>
+                <option value="percent">Percent (%)</option>
+              </select>
+            </div>
+            <div class="cg">
+              <span class="clabel">Scale</span>
+              <select class="cinput" id="numScale" onchange="updateChart()">
+                <option value="1">Units</option>
+                <option value="1000" selected>Thousands (K)</option>
+                <option value="1000000">Millions (M)</option>
+                <option value="1000000000">Billions (B)</option>
+              </select>
+            </div>
+            <div class="cg">
+              <span class="clabel">Decimals</span>
+              <input type="number" class="cinput" id="decimals" value="1" min="0" max="4" oninput="updateChart()">
+            </div>
+            <div class="cg">
+              <span class="clabel">Bar Width %</span>
+              <div class="rrow">
+                <input type="range" class="cinput" id="barWidth" min="30" max="92" value="62" oninput="updateChart();this.nextElementSibling.textContent=this.value+'%'">
+                <span class="cval">62%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ctrl-section">
+        <div class="ctrl-section-title" onclick="toggleCtrl(this)">Colors <span class="ctrl-chevron">▾</span></div>
+        <div class="ctrl-body">
+          <div class="ctrl-grid">
+            <div class="cg">
+              <span class="clabel">Positive</span>
+              <div class="cp-swatch" id="sw-cPos" onclick="openPicker('cPos',this)"><div class="cp-swatch-inner" style="background:#3a9e65"></div></div>
+            </div>
+            <div class="cg">
+              <span class="clabel">Negative</span>
+              <div class="cp-swatch" id="sw-cNeg" onclick="openPicker('cNeg',this)"><div class="cp-swatch-inner" style="background:#d94535"></div></div>
+            </div>
+            <div class="cg">
+              <span class="clabel">Anchor</span>
+              <div class="cp-swatch" id="sw-cAnchor" onclick="openPicker('cAnchor',this)"><div class="cp-swatch-inner" style="background:#1a3a5c"></div></div>
+            </div>
+            <div class="cg">
+              <span class="clabel">Subtotal</span>
+              <div class="cp-swatch" id="sw-cSub" onclick="openPicker('cSub',this)"><div class="cp-swatch-inner" style="background:#7060aa"></div></div>
+            </div>
+            <div class="cg">
+              <span class="clabel">Connector</span>
+              <div class="cp-swatch" id="sw-cConn" onclick="openPicker('cConn',this)"><div class="cp-swatch-inner" style="background:#b8b4ae"></div></div>
+            </div>
+            <div class="cg">
+              <span class="clabel">Plug / Other</span>
+              <div class="cp-swatch" id="sw-cPlug" onclick="openPicker('cPlug',this)"><div class="cp-swatch-inner" style="background:#8a7a6a"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ctrl-section">
+        <div class="ctrl-section-title" onclick="toggleCtrl(this)">Axis & Labels <span class="ctrl-chevron">▾</span></div>
+        <div class="ctrl-body">
+          <div class="ctrl-grid">
+            <div class="cg">
+              <span class="clabel">X Rotation</span>
+              <div class="rrow">
+                <input type="range" class="cinput" id="xRot" min="-90" max="0" step="5" value="-30" oninput="updateChart();this.nextElementSibling.textContent=this.value+'°'">
+                <span class="cval">-30°</span>
+              </div>
+            </div>
+            <div class="cg">
+              <span class="clabel">Label Size</span>
+              <div class="rrow">
+                <input type="range" class="cinput" id="xFSize" min="8" max="18" step="1" value="11" oninput="updateChart();this.nextElementSibling.textContent=this.value+'px'">
+                <span class="cval">11px</span>
+              </div>
+            </div>
+            <div class="cg">
+              <span class="clabel">Data Label Size</span>
+              <div class="rrow">
+                <input type="range" class="cinput" id="dLSize" min="8" max="18" step="1" value="11" oninput="updateChart();this.nextElementSibling.textContent=this.value+'px'">
+                <span class="cval">11px</span>
+              </div>
+            </div>
+            <div class="cg">
+              <span class="clabel">Y Axis Size</span>
+              <div class="rrow">
+                <input type="range" class="cinput" id="yFSize" min="8" max="16" step="1" value="10" oninput="updateChart();this.nextElementSibling.textContent=this.value+'px'">
+                <span class="cval">10px</span>
+              </div>
+            </div>
+            <div class="cg">
+              <span class="clabel">Grouping Size</span>
+              <div class="rrow">
+                <input type="range" class="cinput" id="gFSize" min="7" max="16" step="1" value="10" oninput="updateChart();this.nextElementSibling.textContent=this.value+'px'">
+                <span class="cval">10px</span>
+              </div>
+            </div>
+            <div class="cg full">
+              <span class="clabel">Y Axis Label</span>
+              <input type="text" class="cinput" id="yAxisLabel" placeholder="e.g. USD Thousands" oninput="updateChart()">
+            </div>
+            <div class="cg">
+              <span class="clabel">Y Min</span>
+              <input type="text" class="cinput" id="yMin" placeholder="auto" oninput="updateChart()">
+            </div>
+            <div class="cg">
+              <span class="clabel">Y Max</span>
+              <input type="text" class="cinput" id="yMax" placeholder="auto" oninput="updateChart()">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ctrl-section">
+        <div class="ctrl-section-title" onclick="toggleCtrl(this)">Display <span class="ctrl-chevron">▾</span></div>
+        <div class="ctrl-body">
+          <div class="toggle-row">
+            <span class="toggle-label">Data labels</span>
+            <label class="tog"><input type="checkbox" id="showLabels" checked onchange="updateChart()"><span class="tog-slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <span class="toggle-label">Connector lines</span>
+            <label class="tog"><input type="checkbox" id="showConn" checked onchange="updateChart()"><span class="tog-slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <span class="toggle-label">Legend</span>
+            <label class="tog"><input type="checkbox" id="showLegend" checked onchange="updateChart()"><span class="tog-slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <span class="toggle-label">Gridlines</span>
+            <label class="tog"><input type="checkbox" id="showGrid" checked onchange="updateChart()"><span class="tog-slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <span class="toggle-label">Y Axis</span>
+            <label class="tog"><input type="checkbox" id="showY" checked onchange="updateChart()"><span class="tog-slider"></span></label>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /style -->
+
+    <!-- SAVED TAB -->
+    <div class="tab-pane" id="tab-saved">
+      <div class="saved-section">
+        <div id="savedList"><div class="saved-empty">No saved charts yet.<br>Click <strong>Save</strong> in the top bar to save your current chart.</div></div>
+      </div>
+    </div>
+
+  </div><!-- /sidebar-content -->
+</aside>
+
+<!-- CHART AREA -->
+<main class="chart-area">
+  <div class="stat-bar" id="statBar"></div>
+  <div class="chart-frame">
+    <input class="chart-title-input" id="chartTitleInline" placeholder="Click to add chart title" oninput="updateStats()">
+    <input class="chart-subtitle-input" id="chartSubtitleInline" placeholder="Source / subtitle">
+    <div class="chart-canvas-wrap">
+      <canvas id="wChart"></canvas>
+    </div>
+    <div class="legend-row" id="legendRow"></div>
+    <input class="chart-footnote-input" id="chartFootnote" placeholder="Footnote (click to edit)">
+  </div>
+</main>
+
+</div><!-- /app -->
+
+<!-- Shared custom color picker popover -->
+<div class="cp-popover" id="cpPopover">
+  <canvas class="cp-canvas" id="cpCanvas" width="196" height="140"></canvas>
+  <input type="range" class="cp-hue" id="cpHue" min="0" max="360" value="0">
+  <div class="cp-fields">
+    <div class="cp-field">
+      <input type="text" id="cpR" maxlength="3" placeholder="0">
+      <span class="cp-field-label">R</span>
+    </div>
+    <div class="cp-field">
+      <input type="text" id="cpG" maxlength="3" placeholder="0">
+      <span class="cp-field-label">G</span>
+    </div>
+    <div class="cp-field">
+      <input type="text" id="cpB" maxlength="3" placeholder="0">
+      <span class="cp-field-label">B</span>
+    </div>
+  </div>
+  <div class="cp-hex-row">
+    <span class="cp-hex-label">Hex</span>
+    <input type="text" id="cpHex" maxlength="7" placeholder="#000000">
+  </div>
+</div>
+
+<!-- SAVE MODAL -->
+<div class="modal-overlay" id="saveModal" onclick="if(event.target===this)closeSaveModal()">
+  <div class="modal">
+    <div class="modal-title" id="saveModalTitle">Save Chart</div>
+    <label class="modal-label" for="saveNameInput">Chart name</label>
+    <input class="modal-input" id="saveNameInput" type="text" placeholder="e.g. Q4 2024 Revenue Bridge"
+      onkeydown="if(event.key==='Enter')doSave()">
+    <div class="modal-actions">
+      <button class="modal-btn cancel" onclick="closeSaveModal()">Cancel</button>
+      <button class="modal-btn saveas" id="btnSaveAs" onclick="doSaveAs()">Save As New</button>
+      <button class="modal-btn save" id="btnSave" onclick="doSave()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════
+let rows = [
+  { label: 'FY23 Revenue',      value: 8400, type: 'anchor'   },
+  { label: 'Volume - Existing', value:  700, type: 'positive' },
+  { label: 'Price - Existing',  value:  200, type: 'positive' },
+  { label: 'New Logos',         value:  500, type: 'positive' },
+  { label: 'Churn',             value: -300, type: 'negative' },
+  { label: 'Discounts',         value: -200, type: 'negative' },
+  { label: 'Fees',              value:  100, type: 'positive' },
+  { label: 'Ad Revenue',        value:  300, type: 'positive' },
+  { label: 'Core Business',     value: null, type: 'subtotal' },
+  { label: 'Indirect Channel',  value:  300, type: 'positive' },
+  { label: 'Service Revenue',   value:  600, type: 'positive' },
+  { label: 'One-time Items',    value: -1000, type: 'negative' },
+];
+
+// groups: array of { id, label, color, rowIndices: Set<number> }
+let groups = [
+  { id: 1, label: 'Existing Customers', color: '#2d6aa0', rowIndices: new Set([1, 2]) },
+  { id: 2, label: 'Adds & Drops',       color: '#c0622a', rowIndices: new Set([3, 4]) },
+  { id: 3, label: 'All Other Revenue',  color: '#5a8a3a', rowIndices: new Set([6, 7]) },
+  { id: 4, label: 'Non-Core',           color: '#9040a0', rowIndices: new Set([9, 10, 11, -1]) },
+];
+let nextGroupId = 5;
+let chartInstance = null;
+let dragSrcIdx = null;
+
+// Tracks which saved chart is currently loaded (null = unsaved/new)
+let currentSaveId = null;
+
+// Tie-out mode (default): a fixed end anchor value is set by the user.
+// compute() inserts a synthetic plug bar just before the end anchor.
+// Free-form mode: end anchor auto-calculates from the running total of all bars.
+let tieOutMode = true;
+let plugLabel = 'All other, net';
+// tieOutEndVal and tieOutEndLabel are read from the DOM inputs
+
+// ══════════════════════════════════════════
+// CUSTOM COLOR PICKER
+// ══════════════════════════════════════════
+const _cp = {
+  targetId: null,       // color key e.g. 'cPos', or null for group
+  groupId: null,        // group id when editing a group color
+  swatchEl: null,       // the swatch/dot element that was clicked
+  onCommit: null,       // callback(hex) called on every color change
+  h: 0, s: 1, v: 1,    // HSV state
+  dragging: false,
+
+  // Convert HSV → RGB (0-255)
+  hsvToRgb(h, s, v) {
+    const i = Math.floor(h / 60) % 6;
+    const f = h / 60 - Math.floor(h / 60);
+    const p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s);
+    const sets = [[v,t,p],[q,v,p],[p,v,t],[p,q,v],[t,p,v],[v,p,q]];
+    const [r,g,b] = sets[i];
+    return [Math.round(r*255), Math.round(g*255), Math.round(b*255)];
+  },
+
+  // Convert RGB → HSV
+  rgbToHsv(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r,g,b), min = Math.min(r,g,b), d = max - min;
+    let h = 0;
+    if (d) {
+      if (max===r) h = ((g-b)/d + 6) % 6;
+      else if (max===g) h = (b-r)/d + 2;
+      else h = (r-g)/d + 4;
+      h *= 60;
+    }
+    return [h, max ? d/max : 0, max];
+  },
+
+  // Hex ↔ RGB
+  hexToRgb(hex) {
+    const m = hex.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    return m ? [parseInt(m[1],16), parseInt(m[2],16), parseInt(m[3],16)] : null;
+  },
+  rgbToHex(r, g, b) {
+    return '#' + [r,g,b].map(x => x.toString(16).padStart(2,'0')).join('');
+  },
+
+  currentHex() {
+    const [r,g,b] = this.hsvToRgb(this.h, this.s, this.v);
+    return this.rgbToHex(r, g, b);
+  },
+
+  drawCanvas() {
+    const canvas = document.getElementById('cpCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+
+    // Hue-colored background
+    const hueColor = `hsl(${this.h},100%,50%)`;
+    ctx.fillStyle = hueColor;
+    ctx.fillRect(0, 0, W, H);
+
+    // White gradient left→right (saturation)
+    const wGrad = ctx.createLinearGradient(0,0,W,0);
+    wGrad.addColorStop(0, 'rgba(255,255,255,1)');
+    wGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = wGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Black gradient top→bottom (value)
+    const bGrad = ctx.createLinearGradient(0,0,0,H);
+    bGrad.addColorStop(0, 'rgba(0,0,0,0)');
+    bGrad.addColorStop(1, 'rgba(0,0,0,1)');
+    ctx.fillStyle = bGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Cursor circle
+    const cx = this.s * W;
+    const cy = (1 - this.v) * H;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 6, 0, 2*Math.PI);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, 6, 0, 2*Math.PI);
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  },
+
+  updateFields() {
+    const [r,g,b] = this.hsvToRgb(this.h, this.s, this.v);
+    const hex = this.rgbToHex(r,g,b);
+    const rEl = document.getElementById('cpR');
+    const gEl = document.getElementById('cpG');
+    const bEl = document.getElementById('cpB');
+    const hexEl = document.getElementById('cpHex');
+    const hueEl = document.getElementById('cpHue');
+    if (rEl) rEl.value = r;
+    if (gEl) gEl.value = g;
+    if (bEl) bEl.value = b;
+    if (hexEl) { hexEl.value = hex; hexEl.classList.remove('invalid'); }
+    if (hueEl) hueEl.value = Math.round(this.h);
+  },
+
+  commit() {
+    const hex = this.currentHex();
+    // Update the swatch display
+    if (this.swatchEl) {
+      const inner = this.swatchEl.querySelector('.cp-swatch-inner');
+      if (inner) inner.style.background = hex;
+      else this.swatchEl.style.background = hex; // group dot
+    }
+    if (this.onCommit) this.onCommit(hex);
+  },
+
+  setFromHsv(h, s, v) {
+    this.h = h; this.s = s; this.v = v;
+    this.drawCanvas();
+    this.updateFields();
+    this.commit();
+  },
+
+  setFromHex(hex) {
+    const rgb = this.hexToRgb(hex);
+    if (!rgb) return;
+    const [h,s,v] = this.rgbToHsv(...rgb);
+    this.h = h; this.s = s; this.v = v;
+    document.getElementById('cpHue').value = Math.round(h);
+    this.drawCanvas();
+    this.updateFields();
+    this.commit();
+  },
+
+  positionPopover(anchorEl) {
+    const pop = document.getElementById('cpPopover');
+    const rect = anchorEl.getBoundingClientRect();
+    const pw = 216, ph = 260;
+    let left = rect.left;
+    let top = rect.bottom + 6;
+    if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+    if (top + ph > window.innerHeight - 8) top = rect.top - ph - 6;
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+  }
+};
+
+// Initialise picker event listeners once
+(function initPicker() {
+  const canvas = document.getElementById('cpCanvas');
+  const hueEl  = document.getElementById('cpHue');
+  const rEl    = document.getElementById('cpR');
+  const gEl    = document.getElementById('cpG');
+  const bEl    = document.getElementById('cpB');
+  const hexEl  = document.getElementById('cpHex');
+
+  function canvasXY(e) {
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.max(0, Math.min(canvas.width,  (e.clientX - rect.left) * (canvas.width  / rect.width)));
+    const y = Math.max(0, Math.min(canvas.height, (e.clientY - rect.top)  * (canvas.height / rect.height)));
+    return [x, y];
+  }
+
+  canvas.addEventListener('mousedown', e => {
+    _cp.dragging = true;
+    const [x,y] = canvasXY(e);
+    _cp.s = x / canvas.width;
+    _cp.v = 1 - y / canvas.height;
+    _cp.drawCanvas(); _cp.updateFields(); _cp.commit();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!_cp.dragging) return;
+    const [x,y] = canvasXY(e);
+    _cp.s = x / canvas.width;
+    _cp.v = 1 - y / canvas.height;
+    _cp.drawCanvas(); _cp.updateFields(); _cp.commit();
+  });
+  document.addEventListener('mouseup', () => { _cp.dragging = false; });
+
+  hueEl.addEventListener('input', () => {
+    _cp.h = parseFloat(hueEl.value);
+    _cp.drawCanvas(); _cp.updateFields(); _cp.commit();
+  });
+
+  function rgbFieldChange() {
+    const r = Math.min(255, Math.max(0, parseInt(rEl.value) || 0));
+    const g = Math.min(255, Math.max(0, parseInt(gEl.value) || 0));
+    const b = Math.min(255, Math.max(0, parseInt(bEl.value) || 0));
+    const [h,s,v] = _cp.rgbToHsv(r,g,b);
+    _cp.h = h; _cp.s = s; _cp.v = v;
+    hueEl.value = Math.round(h);
+    _cp.drawCanvas(); _cp.updateFields(); _cp.commit();
+  }
+  rEl.addEventListener('change', rgbFieldChange);
+  gEl.addEventListener('change', rgbFieldChange);
+  bEl.addEventListener('change', rgbFieldChange);
+
+  hexEl.addEventListener('input', () => {
+    const v = hexEl.value.trim();
+    const valid = /^#[0-9a-fA-F]{6}$/.test(v);
+    hexEl.classList.toggle('invalid', !valid);
+    if (valid) _cp.setFromHex(v);
+  });
+
+  // Close on outside click
+  document.addEventListener('mousedown', e => {
+    const pop = document.getElementById('cpPopover');
+    if (pop.classList.contains('open') && !pop.contains(e.target) && !e.target.closest('.cp-swatch') && !e.target.closest('.group-color-dot')) {
+      pop.classList.remove('open');
+      _cp.targetId = null; _cp.groupId = null;
+    }
+  }, true);
+})();
+
+function openPicker(colorKey, swatchEl) {
+  // Read current hex from the swatch inner div background
+  const inner = swatchEl.querySelector('.cp-swatch-inner');
+  const currentHex = inner ? inner.style.background : '#ff0000';
+
+  _cp.targetId = colorKey;
+  _cp.groupId = null;
+  _cp.swatchEl = swatchEl;
+  _cp.onCommit = (hex) => {
+    // Store the value — captureState reads from _cpColors map
+    _cpColors[colorKey] = hex;
+    updateChart();
+  };
+
+  const rgb = _cp.hexToRgb(currentHex) || [255,0,0];
+  const [h,s,v] = _cp.rgbToHsv(...rgb);
+  _cp.h = h; _cp.s = s; _cp.v = v;
+  document.getElementById('cpHue').value = Math.round(h);
+  _cp.drawCanvas();
+  _cp.updateFields();
+
+  const pop = document.getElementById('cpPopover');
+  pop.classList.add('open');
+  _cp.positionPopover(swatchEl);
+}
+
+function openGroupPicker(groupId, dotEl) {
+  const g = groups.find(g => g.id === groupId);
+  if (!g) return;
+
+  _cp.targetId = null;
+  _cp.groupId = groupId;
+  _cp.swatchEl = dotEl;
+  _cp.onCommit = (hex) => {
+    const gr = groups.find(g => g.id === groupId);
+    if (gr) { gr.color = hex; dotEl.style.background = hex; updateChart(); }
+  };
+
+  const rgb = _cp.hexToRgb(g.color) || [45,106,160];
+  const [h,s,v] = _cp.rgbToHsv(...rgb);
+  _cp.h = h; _cp.s = s; _cp.v = v;
+  document.getElementById('cpHue').value = Math.round(h);
+  _cp.drawCanvas();
+  _cp.updateFields();
+
+  const pop = document.getElementById('cpPopover');
+  pop.classList.add('open');
+  _cp.positionPopover(dotEl);
+}
+
+// Map that holds the current color values (replaces the hidden <input type="color"> elements)
+const _cpColors = {
+  cPos: '#3a9e65', cNeg: '#d94535', cAnchor: '#1a3a5c',
+  cSub: '#7060aa', cConn: '#b8b4ae', cPlug: '#8a7a6a'
+};
+function switchTab(name, btn) {
+  document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'groups') renderGroups();
+  if (name === 'saved') renderSavedList();
+}
+
+function toggleCtrl(header) {
+  const body = header.nextElementSibling;
+  const chev = header.querySelector('.ctrl-chevron');
+  body.classList.toggle('closed');
+  chev.classList.toggle('closed');
+}
+
+// ══════════════════════════════════════════
+// DATA TABLE
+// ══════════════════════════════════════════
+function typeLabel(t) {
+  return { positive:'Increase', negative:'Decrease', anchor:'Anchor', subtotal:'Subtotal' }[t] || t;
+}
+
+function renderTable() {
+  const tbody = document.getElementById('tblBody');
+  tbody.innerHTML = '';
+  rows.forEach((row, i) => {
+    // subtotals are always auto (can't set value). Anchors are editable (set base point).
+    const isAutoDisabled = row.type === 'subtotal';
+    const tr = document.createElement('tr');
+    tr.dataset.idx = i;
+    tr.setAttribute('draggable', false); // only enabled via grip mousedown
+    tr.innerHTML = `
+      <td><span class="drag-grip" title="Drag to reorder">⠿</span></td>
+      <td><input type="text" value="${escH(row.label)}" oninput="rows[${i}].label=this.value;updateChart()"></td>
+      <td>
+        <input type="number" ${isAutoDisabled?'disabled placeholder="auto"':`value="${row.value ?? ''}"`}
+          oninput="onValueInput(${i},this.value)">
+      </td>
+      <td>
+        <select class="type-sel" onchange="onTypeChange(${i},this.value)">
+          ${['positive','negative','anchor','subtotal'].map(t=>
+            `<option value="${t}"${row.type===t?' selected':''}>${typeLabel(t)}</option>`
+          ).join('')}
+        </select>
+      </td>
+      <td><button class="del-btn" onclick="removeRow(${i})">×</button></td>`;
+
+    const grip = tr.querySelector('.drag-grip');
+    // Enable drag only when grip is pressed
+    grip.addEventListener('mousedown', () => { tr.setAttribute('draggable', true); });
+    // Disable after any mouse release so clicking inputs never drags
+    grip.addEventListener('mouseup', () => { tr.setAttribute('draggable', false); });
+
+    tr.addEventListener('dragstart', e => {
+      dragSrcIdx = i;
+      tr.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    tr.addEventListener('dragend', () => {
+      tr.setAttribute('draggable', false);
+      tr.classList.remove('dragging');
+      document.querySelectorAll('.drag-target').forEach(el => el.classList.remove('drag-target'));
+    });
+    tr.addEventListener('dragover', e => { e.preventDefault(); tr.classList.add('drag-target'); });
+    tr.addEventListener('dragleave', () => tr.classList.remove('drag-target'));
+    tr.addEventListener('drop', e => {
+      e.preventDefault(); tr.classList.remove('drag-target');
+      if (dragSrcIdx === null || dragSrcIdx === i) return;
+      const [item] = rows.splice(dragSrcIdx, 1);
+      rows.splice(i, 0, item);
+      renderTable(); renderGroups(); updateChart();
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+function escH(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
+function addRow(type) {
+  let value = null;
+  if (type === 'positive') value = 500;
+  else if (type === 'negative') value = -500;
+  // anchor and subtotal default to null (auto)
+  rows.push({ label: typeLabel(type), value, type });
+  renderTable(); renderGroups(); updateChart();
+}
+
+function removeRow(i) {
+  rows.splice(i, 1);
+  // Clean up group references
+  groups.forEach(g => { g.rowIndices.delete(i); });
+  // Re-map indices above i downward
+  groups.forEach(g => {
+    const newSet = new Set();
+    g.rowIndices.forEach(idx => { if (idx < i) newSet.add(idx); else if (idx > i) newSet.add(idx - 1); });
+    g.rowIndices = newSet;
+  });
+  renderTable(); renderGroups(); updateChart();
+}
+
+function clearAll() {
+  rows = []; groups = []; currentSaveId = null;
+  renderTable(); renderGroups(); updateChart();
+}
+
+// ══════════════════════════════════════════
+// SAVE / LOAD
+// ══════════════════════════════════════════
+const SAVE_INDEX_KEY = 'wf_index';
+
+function captureState() {
+  return {
+    rows: rows.map(r => ({ ...r, rowIndices: undefined })), // plain objects
+    groups: groups.map(g => ({ ...g, rowIndices: [...g.rowIndices] })),
+    nextGroupId,
+    tieOutMode,
+    plugLabel,
+    tieoutEndVal: document.getElementById('tieoutEndVal')?.value ?? '',
+    tieoutEndLabel: document.getElementById('tieoutEndLabel')?.value ?? '',
+    tieoutPlugLabel: document.getElementById('tieoutPlugLabel')?.value ?? '',
+    chartTitle: document.getElementById('chartTitleInline')?.value ?? '',
+    chartSubtitle: document.getElementById('chartSubtitleInline')?.value ?? '',
+    chartFootnote: document.getElementById('chartFootnote')?.value ?? '',
+    style: {
+      numFormat: document.getElementById('numFormat')?.value,
+      numScale: document.getElementById('numScale')?.value,
+      decimals: document.getElementById('decimals')?.value,
+      barWidth: document.getElementById('barWidth')?.value,
+      cPos: _cpColors.cPos,
+      cNeg: _cpColors.cNeg,
+      cAnchor: _cpColors.cAnchor,
+      cSub: _cpColors.cSub,
+      cPlug: _cpColors.cPlug,
+      cConn: _cpColors.cConn,
+      xRot: document.getElementById('xRot')?.value,
+      xFSize: document.getElementById('xFSize')?.value,
+      dLSize: document.getElementById('dLSize')?.value,
+      yFSize: document.getElementById('yFSize')?.value,
+      gFSize: document.getElementById('gFSize')?.value,
+      yAxisLabel: document.getElementById('yAxisLabel')?.value,
+      yMin: document.getElementById('yMin')?.value,
+      yMax: document.getElementById('yMax')?.value,
+      showLabels: document.getElementById('showLabels')?.checked,
+      showConn: document.getElementById('showConn')?.checked,
+      showLegend: document.getElementById('showLegend')?.checked,
+      showGrid: document.getElementById('showGrid')?.checked,
+      showY: document.getElementById('showY')?.checked,
+    }
+  };
+}
+
+function applyState(state) {
+  rows = state.rows || [];
+  groups = (state.groups || []).map(g => ({ ...g, rowIndices: new Set(g.rowIndices || []) }));
+  nextGroupId = state.nextGroupId || (groups.length + 1);
+  tieOutMode = state.tieOutMode ?? true;
+  plugLabel = state.plugLabel || 'All other, net';
+
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined && v !== null) el.value = v; };
+  const setChk = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.checked = v; };
+
+  setVal('tieoutEndVal', state.tieoutEndVal);
+  setVal('tieoutEndLabel', state.tieoutEndLabel);
+  setVal('tieoutPlugLabel', state.tieoutPlugLabel);
+  setVal('chartTitleInline', state.chartTitle);
+  setVal('chartSubtitleInline', state.chartSubtitle);
+  setVal('chartFootnote', state.chartFootnote);
+
+  if (state.style) {
+    const s = state.style;
+    setVal('numFormat', s.numFormat); setVal('numScale', s.numScale);
+    setVal('decimals', s.decimals); setVal('barWidth', s.barWidth);
+    // Restore colors into _cpColors map and update swatch displays
+    const colorKeys = ['cPos','cNeg','cAnchor','cSub','cPlug','cConn'];
+    colorKeys.forEach(k => {
+      if (s[k]) {
+        _cpColors[k] = s[k];
+        const sw = document.getElementById('sw-' + k);
+        if (sw) { const inner = sw.querySelector('.cp-swatch-inner'); if (inner) inner.style.background = s[k]; }
+      }
+    });
+    setVal('xRot', s.xRot); setVal('xFSize', s.xFSize);
+    setVal('dLSize', s.dLSize); setVal('yFSize', s.yFSize); setVal('gFSize', s.gFSize);
+    setVal('yAxisLabel', s.yAxisLabel);
+    setVal('yMin', s.yMin); setVal('yMax', s.yMax);
+    setChk('showLabels', s.showLabels); setChk('showConn', s.showConn);
+    setChk('showLegend', s.showLegend); setChk('showGrid', s.showGrid);
+    setChk('showY', s.showY);
+    // Sync slider display values
+    const syncSlider = (id, suffix) => {
+      const el = document.getElementById(id);
+      if (el) el.nextElementSibling && (el.nextElementSibling.textContent = el.value + suffix);
+    };
+    syncSlider('barWidth', '%'); syncSlider('xRot', '°');
+    syncSlider('xFSize', 'px'); syncSlider('dLSize', 'px'); syncSlider('yFSize', 'px'); syncSlider('gFSize', 'px');
+  }
+
+  // Sync tie-out UI state
+  document.getElementById('btnTieOut')?.classList.toggle('active', tieOutMode);
+  document.getElementById('btnFreeForm')?.classList.toggle('active', !tieOutMode);
+  const tf = document.getElementById('tieoutFields');
+  if (tf) tf.style.display = tieOutMode ? '' : 'none';
+
+  renderTable(); renderGroups(); updateChart();
+}
+
+// ── Storage abstraction: uses window.storage (Claude artifacts) or localStorage ──
+const store = {
+  async get(key) {
+    if (typeof window.storage !== 'undefined') {
+      try {
+        const r = await window.storage.get(key);
+        return r ? r.value : null;
+      } catch { return null; }
+    } else {
+      return localStorage.getItem(key);
+    }
+  },
+  async set(key, value) {
+    if (typeof window.storage !== 'undefined') {
+      await window.storage.set(key, value);
+    } else {
+      localStorage.setItem(key, value);
+    }
+  },
+  async del(key) {
+    if (typeof window.storage !== 'undefined') {
+      await window.storage.delete(key);
+    } else {
+      localStorage.removeItem(key);
+    }
+  }
+};
+
+async function getSaveIndex() {
+  try {
+    const raw = await store.get(SAVE_INDEX_KEY);
+    if (raw) return JSON.parse(raw);
+    // Attempt migration from old colon-based keys (legacy format)
+    try {
+      const oldRaw = await store.get('wf:index');
+      if (oldRaw) {
+        const oldIndex = JSON.parse(oldRaw);
+        // Migrate each chart entry to new key format
+        for (const entry of oldIndex) {
+          try {
+            const chartData = await store.get('chart:' + entry.id);
+            if (chartData) {
+              await store.set('wf_chart_' + entry.id, chartData);
+            }
+          } catch(e) {}
+        }
+        // Save migrated index under new key
+        await store.set(SAVE_INDEX_KEY, JSON.stringify(oldIndex));
+        return oldIndex;
+      }
+    } catch(e) {}
+    return [];
+  } catch { return []; }
+}
+
+async function setSaveIndex(index) {
+  try { await store.set(SAVE_INDEX_KEY, JSON.stringify(index)); } catch(e) {}
+}
+
+// ── Modal ──
+function openSaveModal() {
+  const modal = document.getElementById('saveModal');
+  const nameInput = document.getElementById('saveNameInput');
+  const title = document.getElementById('saveModalTitle');
+  const btnSave = document.getElementById('btnSave');
+  const btnSaveAs = document.getElementById('btnSaveAs');
+
+  // Pre-fill with chart title or existing save name
+  const chartTitle = document.getElementById('chartTitleInline')?.value?.trim();
+  if (currentSaveId) {
+    // Find the existing name
+    getSaveIndex().then(index => {
+      const entry = index.find(e => e.id === currentSaveId);
+      nameInput.value = entry ? entry.name : (chartTitle || '');
+    });
+    title.textContent = 'Save Chart';
+    btnSave.textContent = 'Save';
+    btnSaveAs.style.display = '';
+  } else {
+    nameInput.value = chartTitle || '';
+    title.textContent = 'Save Chart';
+    btnSave.textContent = 'Save';
+    btnSaveAs.style.display = 'none';
+  }
+
+  modal.classList.add('open');
+  setTimeout(() => nameInput.focus(), 50);
+  nameInput.select();
+}
+
+function closeSaveModal() {
+  document.getElementById('saveModal').classList.remove('open');
+}
+
+async function doSave() {
+  const name = document.getElementById('saveNameInput').value.trim();
+  if (!name) { document.getElementById('saveNameInput').focus(); return; }
+
+  const state = captureState();
+  const now = new Date().toISOString();
+  let index = await getSaveIndex();
+
+  // Use existing ID or create a new one
+  const saveId = currentSaveId || ('wf_' + Date.now());
+
+  // Capture thumbnail separately (kept out of the index to keep it small)
+  let thumbnail = '';
+  try {
+    const src = document.getElementById('wChart');
+    if (src && src.width > 0) {
+      const tw = 240, th = 80;
+      const thumb = document.createElement('canvas');
+      thumb.width = tw; thumb.height = th;
+      const tctx = thumb.getContext('2d');
+      tctx.fillStyle = '#ffffff';
+      tctx.fillRect(0, 0, tw, th);
+      tctx.drawImage(src, 0, 0, tw, th);
+      thumbnail = thumb.toDataURL('image/jpeg', 0.6);
+    }
+  } catch(e) {}
+
+  // Save chart data first — if this fails, abort
+  try {
+    await store.set('wf_chart_' + saveId, JSON.stringify(state));
+  } catch(e) { alert('Save failed: ' + e.message); return; }
+
+  // Save thumbnail separately — failure here is non-fatal
+  if (thumbnail) {
+    try { await store.set('wf_thumb_' + saveId, thumbnail); } catch(e) {}
+  }
+
+  // Update index (lean — no thumbnail blob here)
+  if (currentSaveId) {
+    const i = index.findIndex(e => e.id === saveId);
+    if (i !== -1) { index[i].name = name; index[i].updatedAt = now; }
+    else { index.push({ id: saveId, name, updatedAt: now }); }
+  } else {
+    index.push({ id: saveId, name, updatedAt: now });
+  }
+
+  try {
+    await setSaveIndex(index);
+  } catch(e) { alert('Save failed (index): ' + e.message); return; }
+
+  // Only update currentSaveId after everything succeeded
+  currentSaveId = saveId;
+  closeSaveModal();
+  renderSavedList();
+}
+
+async function doSaveAs() {
+  // Force a new ID — treat it as a fresh save
+  currentSaveId = null;
+  document.getElementById('btnSaveAs').style.display = 'none';
+  await doSave();
+}
+
+async function loadChart(id) {
+  try {
+    let raw = await store.get('wf_chart_' + id);
+    // Fallback: try legacy key format (chart:wf_... or chart:...)
+    if (!raw) raw = await store.get('chart:' + id).catch(() => null);
+    if (!raw) { alert('Chart data not found. It may have been saved in a previous session before a storage format change.'); return; }
+    const state = JSON.parse(raw);
+    currentSaveId = id;
+    applyState(state);
+    document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.stab')[0].classList.add('active');
+    document.getElementById('tab-data').classList.add('active');
+  } catch(e) {
+    console.error('loadChart error:', e);
+    alert('Could not load chart: ' + e.message);
+  }
+}
+
+async function deleteChart(id, e) {
+  e.stopPropagation();
+  if (!confirm('Delete this saved chart?')) return;
+  try {
+    await store.del('wf_chart_' + id);
+    try { await store.del('wf_thumb_' + id); } catch(e) {}
+    let index = await getSaveIndex();
+    index = index.filter(e => e.id !== id);
+    await setSaveIndex(index);
+    if (currentSaveId === id) currentSaveId = null;
+    renderSavedList();
+  } catch(e) { alert('Delete failed.'); }
+}
+
+async function renderSavedList() {
+  const container = document.getElementById('savedList');
+  if (!container) return;
+  let index;
+  try { index = await getSaveIndex(); } catch { index = []; }
+
+  if (!index.length) {
+    container.innerHTML = '<div class="saved-empty">No saved charts yet.<br>Click <strong>Save</strong> in the top bar to save your current chart.</div>';
+    return;
+  }
+
+  index.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+
+  container.innerHTML = '';
+  const list = document.createElement('div');
+  list.className = 'saved-list';
+
+  for (const entry of index) {
+    const card = document.createElement('div');
+    card.className = 'saved-card';
+    if (entry.id === currentSaveId) card.style.borderColor = 'var(--accent)';
+    const dt = new Date(entry.updatedAt);
+    const dateStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const timeStr = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    const isCurrent = entry.id === currentSaveId;
+
+    // Build card without thumbnail first so it appears immediately
+    card.innerHTML = `
+      <div class="saved-thumb saved-thumb-empty" id="thumb-${entry.id}">No preview</div>
+      <div class="saved-card-body">
+        <div class="saved-card-name">${escH(entry.name)}${isCurrent ? ' <span class="saved-current-badge">CURRENT</span>' : ''}</div>
+        <div class="saved-card-meta">Saved ${dateStr} at ${timeStr}</div>
+      </div>
+      <button class="saved-del" title="Delete" onclick="deleteChart('${entry.id}',event)">×</button>`;
+
+    card.addEventListener('click', () => loadChart(entry.id));
+    list.appendChild(card);
+
+    // Load thumbnail asynchronously and fill in when ready
+    ;(async (id) => {
+      try {
+        const thumb = await store.get('wf_thumb_' + id);
+        if (thumb) {
+          const el = document.getElementById('thumb-' + id);
+          if (el) {
+            el.className = 'saved-thumb';
+            el.innerHTML = `<img src="${thumb}" alt="preview">`;
+          }
+        }
+      } catch(e) {}
+    })(entry.id);
+  }
+
+  container.appendChild(list);
+}
+
+// ══════════════════════════════════════════
+// GROUPS
+// ══════════════════════════════════════════
+const GROUP_COLORS = ['#2d6aa0','#c0622a','#5a8a3a','#9040a0','#b07820','#3a8a8a'];
+
+function addGroup() {
+  const color = GROUP_COLORS[groups.length % GROUP_COLORS.length];
+  groups.push({ id: nextGroupId++, label: 'Group ' + groups.length, color, rowIndices: new Set() });
+  renderGroups(); updateChart();
+}
+
+function removeGroup(id) {
+  groups = groups.filter(g => g.id !== id);
+  renderGroups(); updateChart();
+}
+
+function renderGroups() {
+  const container = document.getElementById('groupList');
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (groups.length === 0) {
+    container.innerHTML = '<p class="group-empty">No groups yet. Click "+ Add Group" below.</p>';
+    return;
+  }
+
+  // Eligible items: regular positive/negative rows, plus the synthetic plug bar (index -1) when in tie-out mode
+  const eligibleRows = rows.map((r,i) => i).filter(i => rows[i].type === 'positive' || rows[i].type === 'negative');
+
+  groups.forEach(group => {
+    const card = document.createElement('div');
+    card.className = 'group-card';
+
+    // Compute net sum: real rows + plug bar if included
+    let netVal = [...group.rowIndices]
+      .filter(i => i >= 0 && i < rows.length && (rows[i].type === 'positive' || rows[i].type === 'negative'))
+      .reduce((s, i) => s + (parseFloat(rows[i].value) || 0), 0);
+    if (group.rowIndices.has(-1) && tieOutMode) {
+      // Plug value = endVal - running total
+      const endVal = parseFloat(document.getElementById('tieoutEndVal')?.value);
+      let running = 0;
+      rows.forEach(r => {
+        if (r.type === 'anchor') { const v = parseFloat(r.value); running = isNaN(v) ? running : v; }
+        else if (r.type !== 'subtotal') running += parseFloat(r.value) || 0;
+      });
+      if (!isNaN(endVal)) netVal += (endVal - running);
+    }
+
+    card.innerHTML = `
+      <div class="group-header">
+        <div class="group-color-dot" id="gdot-${group.id}" style="background:${group.color}" title="Change color"
+          onclick="openGroupPicker(${group.id},this)"></div>
+        <input class="group-name-input" value="${escH(group.label)}"
+          oninput="onGroupLabelInput(${group.id},this.value)">
+        <button class="group-del" onclick="removeGroup(${group.id})">×</button>
+      </div>
+      <div class="group-body">
+        <div class="group-row-list" id="grl-${group.id}"></div>
+      </div>`;
+
+    container.appendChild(card);
+
+    const rowList = card.querySelector(`#grl-${group.id}`);
+
+    const hasAnyEligible = eligibleRows.length > 0 || tieOutMode;
+    if (!hasAnyEligible) {
+      rowList.innerHTML = '<span class="group-empty">No eligible bars (add Increase/Decrease rows)</span>';
+    } else {
+      // Regular rows first
+      eligibleRows.forEach(i => {
+        const item = document.createElement('div');
+        item.className = 'group-row-item';
+        const checked = group.rowIndices.has(i) ? 'checked' : '';
+        item.innerHTML = `
+          <input type="checkbox" id="grp${group.id}-row${i}" ${checked}
+            onchange="toggleGroupRow(${group.id},${i},this.checked)">
+          <label for="grp${group.id}-row${i}">${escH(rows[i].label)}</label>`;
+        rowList.appendChild(item);
+      });
+      // Plug bar row last (matches its position at the end of the chart)
+      if (tieOutMode) {
+        const plugLabel_ = document.getElementById('tieoutPlugLabel')?.value || 'All other, net';
+        const item = document.createElement('div');
+        item.className = 'group-row-item';
+        const checked = group.rowIndices.has(-1) ? 'checked' : '';
+        item.innerHTML = `
+          <input type="checkbox" id="grp${group.id}-plug" ${checked}
+            onchange="toggleGroupRow(${group.id},-1,this.checked)">
+          <label for="grp${group.id}-plug" style="font-style:italic">${escH(plugLabel_)}</label>`;
+        rowList.appendChild(item);
+      }
+    }
+  });
+}
+
+function toggleGroupRow(groupId, rowIdx, checked) {
+  const g = groups.find(g => g.id === groupId);
+  if (!g) return;
+  if (checked) g.rowIndices.add(rowIdx);
+  else g.rowIndices.delete(rowIdx);
+  updateChart();
+}
+
+function onTypeChange(idx, newType) {
+  const oldType = rows[idx].type;
+  rows[idx].type = newType;
+  // Subtotals are always auto — clear value
+  if (newType === 'subtotal') {
+    rows[idx].value = null;
+  }
+  // Switching from subtotal to editable type — give sensible default
+  if (oldType === 'subtotal' && (newType === 'positive' || newType === 'negative' || newType === 'anchor')) {
+    rows[idx].value = newType === 'negative' ? -500 : 500;
+  }
+  renderTable(); renderGroups(); updateChart();
+}
+
+function setTieOutMode(on) {
+  tieOutMode = on;
+  clearTimeout(_debounceTimer);
+  document.getElementById('btnTieOut').classList.toggle('active', on);
+  document.getElementById('btnFreeForm').classList.toggle('active', !on);
+  document.getElementById('tieoutFields').style.display = on ? '' : 'none';
+  renderGroups();
+  updateChart();
+}
+
+function onTieoutEndValInput(v) {
+  updateTieoutHint();
+  // Debounce chart update so mid-typing (e.g. "1" while aiming for "10000") doesn't distort the chart
+  debounce(updateChart, 400);
+}
+
+function onTieoutEndLabelInput(v) {
+  debounce(updateChart, 300);
+}
+
+function updateTieoutHint() {
+  const hint = document.getElementById('tieoutHint');
+  if (!hint || !tieOutMode) return;
+  const endVal = parseFloat(document.getElementById('tieoutEndVal').value);
+  if (isNaN(endVal)) { hint.textContent = ''; return; }
+  // Compute running total through all rows (excluding last anchor if present)
+  let running = 0;
+  rows.forEach(r => {
+    if (r.type === 'anchor') {
+      const v = parseFloat(r.value);
+      running = isNaN(v) ? running : v;
+    } else if (r.type !== 'subtotal') {
+      running += parseFloat(r.value) || 0;
+    }
+  });
+  const plug = endVal - running;
+  hint.textContent = plug === 0
+    ? '✓ Already ties out — no plug needed'
+    : `Plug = ${plug > 0 ? '+' : ''}${fmt(plug)}`;
+  hint.style.color = plug === 0 ? 'var(--positive)' : 'var(--text-muted)';
+}
+
+function onGroupLabelInput(groupId, val) {
+  const g = groups.find(g => g.id === groupId);
+  if (g) { g.label = val; updateChart(); }
+}
+
+// Auto-switch positive/negative type based on value sign
+function onValueInput(idx, rawVal) {
+  const v = parseFloat(rawVal);
+  rows[idx].value = isNaN(v) ? null : v;
+  // Only auto-flip type for pos/neg bars, not anchors
+  if (rows[idx].type === 'positive' || rows[idx].type === 'negative') {
+    const val = isNaN(v) ? 0 : v;
+    const newType = val < 0 ? 'negative' : 'positive';
+    if (rows[idx].type !== newType) {
+      rows[idx].type = newType;
+      const tbody = document.getElementById('tblBody');
+      const tr = tbody.querySelector(`tr[data-idx="${idx}"]`);
+      if (tr) {
+        const sel = tr.querySelector('select.type-sel');
+        if (sel) sel.value = newType;
+      }
+      const groupTab = document.getElementById('tab-groups');
+      if (groupTab && groupTab.classList.contains('active')) renderGroups();
+    }
+  }
+  updateChart();
+}
+
+// ══════════════════════════════════════════
+// PASTE
+// ══════════════════════════════════════════
+function parsePaste() {
+  const raw = document.getElementById('pasteTA').value.trim();
+  if (!raw) return;
+  const parsed = [];
+  raw.split('\n').filter(l => l.trim()).forEach(line => {
+    const parts = line.split(/\t/).map(p => p.trim());
+    let label = '', valStr = '';
+    if (parts.length >= 2) {
+      label = parts.slice(0, parts.length-1).join(' ');
+      valStr = parts[parts.length-1];
+    } else {
+      const sp = line.trim().split(/\s{2,}/);
+      label = sp.length >= 2 ? sp.slice(0, sp.length-1).join(' ') : line.trim();
+      valStr = sp.length >= 2 ? sp[sp.length-1] : '0';
+    }
+    const lv = valStr.toLowerCase().replace(/\s/g,'');
+    let type = 'positive', value = null;
+    if (lv==='anchor'||lv==='total'||lv==='[total]'||lv==='[anchor]') {
+      type = 'anchor'; value = null;
+    } else if (lv==='subtotal'||lv==='[subtotal]') {
+      type = 'subtotal'; value = null;
+    } else {
+      value = parseFloat(valStr.replace(/[$£€,%\s,]/g,''));
+      if (isNaN(value)) value = 0;
+      type = value < 0 ? 'negative' : 'positive';
+    }
+    if (label) parsed.push({ label, value, type });
+  });
+  if (!parsed.length) return;
+
+  // ── Smart mode detection ──
+  // Strategy: look at whether the data has a clear "opening anchor + deltas + closing anchor" shape.
+  //
+  // Pattern A — explicit keyword anchor at end (type='anchor', value=null):
+  //   → Free-form mode. Include all rows as-is.
+  //
+  // Pattern B — last row looks like a closing total:
+  //   Heuristic: if the last row's value is positive AND is larger than every delta row,
+  //   AND the absolute values of all middle rows are smaller than both the first and last rows,
+  //   then treat first row as opening anchor, last row as closing anchor → Tie-out.
+  //
+  // Pattern C — no recognizable anchor shape:
+  //   → Free-form, include all rows.
+
+  const lastRow = parsed[parsed.length - 1];
+  const firstRow = parsed[0];
+
+  if (lastRow.type === 'anchor') {
+    // Explicit keyword anchor at end → free-form
+    rows = parsed;
+    setTieOutMode(false);
+  } else {
+    // Check if first and last rows look like anchors (large values, all deltas smaller)
+    const firstVal = Math.abs(firstRow.value ?? 0);
+    const lastVal = Math.abs(lastRow.value ?? 0);
+    const middleRows = parsed.slice(1, parsed.length - 1);
+    const maxDelta = middleRows.length > 0 ? Math.max(...middleRows.map(r => Math.abs(r.value ?? 0))) : 0;
+    const looksLikeBookends = (
+      parsed.length >= 3 &&
+      firstVal > maxDelta * 2 &&
+      lastVal > maxDelta * 2 &&
+      firstRow.type === 'positive' &&
+      lastRow.type === 'positive'
+    );
+
+    if (looksLikeBookends) {
+      // Treat first row as opening anchor, last row as tie-out end value
+      const openRow = { ...firstRow, type: 'anchor', value: firstRow.value };
+      rows = [openRow, ...middleRows];
+      setTieOutMode(true);
+      const endValEl = document.getElementById('tieoutEndVal');
+      const endLblEl = document.getElementById('tieoutEndLabel');
+      if (endValEl) endValEl.value = lastRow.value;
+      if (endLblEl) endLblEl.value = lastRow.label;
+    } else {
+      // No clear anchor pattern → free-form, include everything
+      rows = parsed;
+      setTieOutMode(false);
+    }
+  }
+
+  document.getElementById('pasteTA').value = '';
+  renderTable(); renderGroups(); updateChart();
+  document.querySelectorAll('.stab')[0].click();
+}
+
+// ══════════════════════════════════════════
+// NUMBER FORMAT
+// ══════════════════════════════════════════
+let _debounceTimer = null;
+function debounce(fn, ms) {
+  clearTimeout(_debounceTimer);
+  _debounceTimer = setTimeout(fn, ms);
+}
+function fmt(val) {
+  const scale = parseFloat(document.getElementById('numScale').value) || 1;
+  const decimals = parseInt(document.getElementById('decimals').value) || 0;
+  const format = document.getElementById('numFormat').value;
+  const scaled = val / scale;
+  const suffix = scale===1000?'K':scale===1000000?'M':scale===1000000000?'B':'';
+  const pfx = format==='currency'?'$':format==='currency_gbp'?'£':format==='currency_eur'?'€':'';
+  const sfx = format==='percent'?'%':suffix;
+  const abs = Math.abs(scaled).toLocaleString('en-US',{minimumFractionDigits:decimals,maximumFractionDigits:decimals});
+  const str = pfx + abs + sfx;
+  return val < 0 ? `(${str})` : str;
+}
+
+// ══════════════════════════════════════════
+// COMPUTE WATERFALL DATA
+// Returns array of bar objects. In tie-out mode, a synthetic plug bar
+// is inserted before the final anchor. Plug bars have type='plug'.
+// ══════════════════════════════════════════
+function compute() {
+  let running = 0;
+  const result = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.type === 'anchor') {
+      const hasExplicit = (row.value !== null && row.value !== undefined && row.value !== '' && !isNaN(parseFloat(row.value)));
+      const anchorVal = hasExplicit ? parseFloat(row.value) : running;
+      running = anchorVal;
+      result.push({ label: row.label, base: 0, size: anchorVal, type: 'anchor', raw: anchorVal, rowIdx: i });
+    } else if (row.type === 'subtotal') {
+      result.push({ label: row.label, base: 0, size: running, type: 'subtotal', raw: running, rowIdx: i });
+    } else {
+      const v = parseFloat(row.value) || 0;
+      const base = v < 0 ? running + v : running;
+      result.push({ label: row.label, base, size: Math.abs(v), type: row.type, raw: v, rowIdx: i });
+      running += v;
+    }
+  }
+
+  // In tie-out mode: insert a plug bar + final anchor at the end
+  if (tieOutMode) {
+    const endValStr = document.getElementById('tieoutEndVal')?.value ?? '';
+    const endVal = parseFloat(endValStr);
+    const endLabel = document.getElementById('tieoutEndLabel')?.value || 'Total';
+    const pLabel = plugLabel || 'All other, net';
+
+    // Only insert plug/anchor if we have a valid, complete end value.
+    // Guard: skip if the field is empty, just a minus sign, or would create
+    // a plug larger than 10x the running total (user is mid-typing a large number).
+    const validEndVal = (endValStr.trim() !== '' && endValStr.trim() !== '-' && !isNaN(endVal));
+    if (validEndVal) {
+      const plugVal = endVal - running;
+      // Insert plug bar only when it's nonzero
+      if (Math.abs(plugVal) > 0.0001) {
+        const plugBase = plugVal < 0 ? running + plugVal : running;
+        result.push({ label: pLabel, base: plugBase, size: Math.abs(plugVal), type: 'plug', raw: plugVal, rowIdx: -1 });
+      }
+      // Always insert end anchor when we have a valid end value
+      result.push({ label: endLabel, base: 0, size: endVal, type: 'anchor', raw: endVal, rowIdx: -1 });
+    }
+  }
+
+  return result;
+}
+
+// ══════════════════════════════════════════
+// CHART
+// ══════════════════════════════════════════
+function hexToRgba(hex, a) {
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+function updateChart() {
+  const bars = compute();
+
+  const cPos    = _cpColors.cPos;
+  const cNeg    = _cpColors.cNeg;
+  const cAnchor = _cpColors.cAnchor;
+  const cSub    = _cpColors.cSub;
+  const cPlug   = _cpColors.cPlug;
+  const cConn   = _cpColors.cConn;
+  const showConn   = document.getElementById('showConn').checked;
+  const showLabels = document.getElementById('showLabels').checked;
+  const showGrid   = document.getElementById('showGrid').checked;
+  const showY      = document.getElementById('showY').checked;
+  const xRot    = parseInt(document.getElementById('xRot').value);
+  const xFSize  = parseInt(document.getElementById('xFSize').value);
+  const yFSize  = parseInt(document.getElementById('yFSize').value);
+  const dLSize  = parseInt(document.getElementById('dLSize').value);
+  const gFSize  = parseInt(document.getElementById('gFSize')?.value ?? 10);
+  const barPct  = parseInt(document.getElementById('barWidth').value) / 100;
+  const yAxisLabel = document.getElementById('yAxisLabel').value;
+  const yMinRaw = document.getElementById('yMin').value;
+  const yMaxRaw = document.getElementById('yMax').value;
+
+  const colorOf = t => t==='anchor'?cAnchor:t==='subtotal'?cSub:t==='negative'?cNeg:t==='plug'?cPlug:cPos;
+
+  const labels   = bars.map(b => b.label);
+  const baseData = bars.map(b => b.base);
+  const sizeData = bars.map(b => b.size);
+  const bgColors = bars.map(b => hexToRgba(colorOf(b.type), 0.88));
+  const bdColors = bars.map(b => hexToRgba(colorOf(b.type), 1));
+
+  // Active groups: must have at least one valid bar (real row OR plug bar if in tie-out mode)
+  const activeGroups = groups.filter(g => {
+    const hasRealBar = [...g.rowIndices].some(i => i >= 0 && i < rows.length && (rows[i].type==='positive'||rows[i].type==='negative'));
+    const hasPlug = g.rowIndices.has(-1) && tieOutMode && bars.some(b => b.type === 'plug');
+    return hasRealBar || hasPlug;
+  });
+
+  const bracketRows = packBrackets(activeGroups, bars);
+  const bracketRowCount = bracketRows.length > 0 ? Math.max(...bracketRows.map(b => b.row)) + 1 : 0;
+
+  // Each bracket band = 36px (bracket line + label + value).
+  // The x-axis tick labels are drawn by Chart.js INSIDE its own padding below chartArea.bottom.
+  // We add extra bottom layout padding = bracketRowCount * bandH.
+  // Then in the draw plugin we start drawing from chart.scales.x.bottom (which is below the tick labels).
+  const bandH = Math.round(gFSize * 3.4); // scales with font: ~34px at 10px, ~44px at 13px
+  const groupPadBottom = bracketRowCount * bandH + (bracketRowCount > 0 ? 4 : 0);
+
+  const canvasEl = document.getElementById('wChart');
+  const ctx2d = canvasEl.getContext('2d');
+
+  // ── GRADIENT PLUGIN ──
+  const gradientPlugin = {
+    beforeDatasetsDraw(chart) {
+      const meta = chart.getDatasetMeta(1);
+      const ctx = chart.ctx;
+      meta.data.forEach((bar, i) => {
+        if (!bar || bar.height == null) return;
+        const hex = colorOf(bars[i].type);
+        try {
+          // bar.height can be negative for downward bars in a stacked chart.
+          // The gradient should always go from the visual top to visual bottom.
+          const top = bar.height >= 0 ? bar.y : bar.y + bar.height;
+          const bot = bar.height >= 0 ? bar.y + bar.height : bar.y;
+          const h = Math.max(1, Math.abs(bar.height));
+          const grad = ctx.createLinearGradient(0, top, 0, top + h);
+          grad.addColorStop(0, hexToRgba(hex, 1));
+          grad.addColorStop(1, hexToRgba(hex, 0.7));
+          bar.options.backgroundColor = grad;
+        } catch(e) {}
+      });
+    }
+  };
+
+  // ── CONNECTOR PLUGIN ──
+  // Positive/anchor/subtotal: connector leaves from the TOP of the bar (bar.y)
+  //   because that Y = the running total level before this bar
+  // Negative: connector leaves from the BOTTOM of the bar (bar.y + bar.height)
+  //   because that Y = the running total level after this decrease
+  const connectorPlugin = {
+    afterDatasetsDraw(chart) {
+      if (!showConn) return;
+      const meta = chart.getDatasetMeta(1);
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.strokeStyle = cConn;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      for (let i = 0; i < bars.length - 1; i++) {
+        const cur = meta.data[i];
+        const nxt = meta.data[i + 1];
+        if (!cur || !nxt) continue;
+        // Connector leaves from the bottom of the bar when value is negative (any type),
+        // and from the top for positive/zero bars.
+        // For anchors and subtotals, always from the top (their "top" = the total level).
+        const bar = bars[i];
+        const isNegBar = (bar.type === 'negative' || bar.type === 'plug') && bar.raw < 0;
+        const fromY = isNegBar ? cur.y + cur.height : cur.y;
+        const rx = cur.x + cur.width / 2;
+        const lx = nxt.x - nxt.width / 2;
+        ctx.beginPath();
+        ctx.moveTo(rx, fromY);
+        ctx.lineTo(lx, fromY);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+  };
+
+  // ── DATA LABEL PLUGIN ──
+  const dataLabelPlugin = {
+    afterDatasetsDraw(chart) {
+      if (!showLabels) return;
+      const meta = chart.getDatasetMeta(1);
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.font = `500 ${dLSize}px 'Libre Franklin', sans-serif`;
+      ctx.textAlign = 'center';
+      bars.forEach((bar, i) => {
+        const b = meta.data[i];
+        if (!b) return;
+        const text = fmt(bar.raw);
+        if (bar.type === 'anchor' || bar.type === 'subtotal') {
+          ctx.fillStyle = 'rgba(255,255,255,0.93)';
+          ctx.fillText(text, b.x, b.y + dLSize + 5);
+        } else if (bar.raw >= 0) {
+          ctx.fillStyle = colorOf(bar.type);
+          ctx.fillText(text, b.x, b.y - 6);
+        } else {
+          ctx.fillStyle = colorOf(bar.type);
+          ctx.fillText(text, b.x, b.y + b.height + dLSize + 3);
+        }
+      });
+      ctx.restore();
+    }
+  };
+
+  // ── GROUP BRACKETS PLUGIN ──
+  // Draw AFTER Chart.js has finished all rendering (including x-axis tick labels).
+  // chart.scales.x.bottom = the pixel Y at the very bottom of the x-axis scale area,
+  // i.e. BELOW all the tick labels. We start brackets from there.
+  //
+  // Each bracket band (height = bandH):
+  //   bracketLineY = scaleBottom + rowIdx * bandH + 10   (the horizontal rule)
+  //   ticks go UP from bracketLineY (toward the axis/labels)
+  //   group label at bracketLineY + 12
+  //   net sum at bracketLineY + 23
+  const groupPlugin = {
+    afterDraw(chart) {
+      if (bracketRows.length === 0) return;
+      const { ctx, scales: { x } } = chart;
+      const meta = chart.getDatasetMeta(1);
+
+      // chart.scales.x.bottom is the bottom edge of the entire x-axis including tick labels
+      const scaleBottom = chart.scales.x.bottom;
+
+      ctx.save();
+
+      bracketRows.forEach(({ group, row: rowIdx }) => {
+        // Resolve rowIndices to bar-array indices (meta.data positions)
+        // Regular rows: bar index == row index (compute() pushes one bar per row in order)
+        // Plug bar sentinel -1: bar index is bars.findIndex(b => b.type === 'plug')
+        const plugBarIdx = bars.findIndex(b => b.type === 'plug');
+        const validBarIdxs = [...group.rowIndices]
+          .map(i => i === -1 ? plugBarIdx : i)
+          .filter(i => i >= 0 && i < meta.data.length && meta.data[i]);
+        if (validBarIdxs.length === 0) return;
+
+        const sortedIdxs = [...validBarIdxs].sort((a,b) => a-b);
+        const firstBar = meta.data[sortedIdxs[0]];
+        const lastBar  = meta.data[sortedIdxs[sortedIdxs.length-1]];
+        if (!firstBar || !lastBar) return;
+
+        const leftX  = firstBar.x - firstBar.width / 2 + 1;
+        const rightX = lastBar.x  + lastBar.width / 2 - 1;
+        const midX   = (leftX + rightX) / 2;
+
+        const bracketLineY = scaleBottom + rowIdx * bandH + Math.round(gFSize * 1.0);
+        const tickH  = Math.max(4, Math.round(gFSize * 0.5));
+        const labelY = bracketLineY + Math.round(gFSize * 1.2);
+        const sumY   = bracketLineY + Math.round(gFSize * 2.3);
+
+        // Net sum: real rows + plug bar if included
+        let netSum = [...group.rowIndices]
+          .filter(i => i >= 0 && i < rows.length && (rows[i].type==='positive'||rows[i].type==='negative'))
+          .reduce((s, i) => s + (parseFloat(rows[i].value)||0), 0);
+        if (group.rowIndices.has(-1) && plugBarIdx >= 0) {
+          netSum += bars[plugBarIdx].raw;
+        }
+
+        ctx.strokeStyle = group.color;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([]);
+
+        // ⌐ shape: ticks go UP, horizontal line at bottom
+        ctx.beginPath();
+        ctx.moveTo(leftX,  bracketLineY - tickH); // up
+        ctx.lineTo(leftX,  bracketLineY);          // down to line
+        ctx.lineTo(rightX, bracketLineY);          // across
+        ctx.lineTo(rightX, bracketLineY - tickH); // up
+        ctx.stroke();
+
+        // Short drop from midpoint toward label
+        ctx.beginPath();
+        ctx.moveTo(midX, bracketLineY);
+        ctx.lineTo(midX, bracketLineY + 4);
+        ctx.stroke();
+
+        // Group label
+        ctx.fillStyle = group.color;
+        ctx.font = `600 ${gFSize}px 'Libre Franklin', sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(group.label, midX, labelY);
+
+        // Net sum (green if positive, red if negative)
+        ctx.fillStyle = netSum >= 0 ? colorOf('positive') : colorOf('negative');
+        ctx.font = `500 ${gFSize}px 'Libre Franklin', sans-serif`;
+        ctx.fillText(fmt(netSum), midX, sumY);
+      });
+
+      ctx.restore();
+    }
+  };
+
+  if (chartInstance) { try { chartInstance.destroy(); } catch(e) {} }
+
+  try {
+  chartInstance = new Chart(ctx2d, {
+    type: 'bar',
+    plugins: [gradientPlugin, connectorPlugin, dataLabelPlugin, groupPlugin],
+    data: {
+      labels,
+      datasets: [
+        {
+          label: '_base',
+          data: baseData,
+          backgroundColor: 'transparent',
+          borderColor: 'transparent',
+          borderWidth: 0,
+          stack: 'wf',
+          categoryPercentage: 1,
+          barPercentage: barPct,
+        },
+        {
+          label: '_val',
+          data: sizeData,
+          backgroundColor: bgColors,
+          borderColor: bdColors,
+          borderWidth: 0,
+          borderRadius: { topLeft:2, topRight:2, bottomLeft:0, bottomRight:0 },
+          borderSkipped: false,
+          stack: 'wf',
+          categoryPercentage: 1,
+          barPercentage: barPct,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 180, easing: 'easeOutQuart' },
+      layout: {
+        padding: {
+          top: showLabels ? dLSize + 14 : 10,
+          bottom: groupPadBottom,
+          left: 4,
+          right: 4,
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        title: { display: false },
+        tooltip: { enabled: false },
+      },
+      scales: {
+        x: {
+          stacked: true,
+          grid: { display: false },
+          border: { color: '#d0cec8', width: 1 },
+          ticks: {
+            color: '#4a4a52',
+            maxRotation: Math.abs(xRot),
+            minRotation: Math.abs(xRot),
+            font: { size: xFSize, family: "'Libre Franklin', sans-serif" },
+            padding: 4,
+          }
+        },
+        y: {
+          display: showY,
+          stacked: true,
+          grid: { display: showGrid, color: 'rgba(0,0,0,0.06)', lineWidth: 1 },
+          border: { dash: [3,3], color: 'transparent' },
+          ticks: {
+            color: '#6a6a74',
+            font: { size: yFSize, family: "'Libre Franklin', sans-serif" },
+            padding: 6,
+            callback: v => fmt(v),
+          },
+          title: {
+            display: !!yAxisLabel, text: yAxisLabel,
+            color: '#6a6a74',
+            font: { size:10, family:"'Libre Franklin', sans-serif" }
+          },
+          min: yMinRaw !== '' ? parseFloat(yMinRaw) : undefined,
+          max: yMaxRaw !== '' ? parseFloat(yMaxRaw) : undefined,
+        }
+      }
+    }
+  });
+
+  updateLegend(cPos, cNeg, cAnchor, cSub, cPlug);
+  updateStats(bars);
+  updateTieoutHint();
+  } catch(e) { console.error('Chart render error:', e); }
+}
+
+// ── Pack brackets into rows (greedy interval packing, non-overlapping) ──
+function packBrackets(activeGroups, barsSnapshot) {
+  if (activeGroups.length === 0) return [];
+  // Resolve -1 (plug bar sentinel) to its actual index in the bars array
+  const plugBarIdx = barsSnapshot ? barsSnapshot.findIndex(b => b.type === 'plug') : -1;
+
+  const brackets = activeGroups.map(group => {
+    const idxs = [...group.rowIndices]
+      .map(i => i === -1 ? plugBarIdx : i)
+      .filter(i => i >= 0)
+      .sort((a,b) => a-b);
+    if (idxs.length === 0) return null;
+    return { group, start: idxs[0], end: idxs[idxs.length-1] };
+  }).filter(Boolean);
+
+  brackets.sort((a,b) => a.start - b.start);
+
+  const rows_used = [];
+  const result = [];
+  brackets.forEach(b => {
+    let assigned = -1;
+    for (let r = 0; r < rows_used.length; r++) {
+      if (rows_used[r] < b.start) { assigned = r; break; }
+    }
+    if (assigned === -1) { assigned = rows_used.length; rows_used.push(-1); }
+    rows_used[assigned] = b.end;
+    result.push({ group: b.group, row: assigned });
+  });
+  return result;
+}
+
+function updateLegend(cPos, cNeg, cAnchor, cSub, cPlug) {
+  const showLegend = document.getElementById('showLegend').checked;
+  const row = document.getElementById('legendRow');
+  if (!showLegend) { row.innerHTML = ''; return; }
+  const bars = compute();
+  const types = bars.map(r => r.type);
+  const items = [];
+  if (types.includes('positive')) items.push(['Increase', cPos]);
+  if (types.includes('negative')) items.push(['Decrease', cNeg]);
+  if (types.includes('anchor'))   items.push(['Anchor',   cAnchor]);
+  if (types.includes('subtotal')) items.push(['Subtotal', cSub]);
+  if (types.includes('plug'))     items.push([plugLabel || 'All other, net', cPlug]);
+  row.innerHTML = items.map(([label, color]) =>
+    `<div class="legend-item">
+      <div class="legend-swatch" style="background:${color}"></div>
+      <span>${escH(label)}</span>
+    </div>`
+  ).join('');
+}
+
+function updateStats(bars) {
+  if (!bars) bars = compute();
+  const anchors = bars.filter(b => b.type === 'anchor');
+  const pos = bars.filter(b => b.type === 'positive');
+  const neg = bars.filter(b => b.type === 'negative');
+  const sumPos = pos.reduce((s,b) => s+b.raw, 0);
+  const sumNeg = neg.reduce((s,b) => s+b.raw, 0);
+  let html = '';
+  if (anchors.length >= 2) {
+    const delta = anchors[anchors.length-1].raw - anchors[0].raw;
+    const pct = anchors[0].raw !== 0 ? ' (' + ((delta/anchors[0].raw)*100).toFixed(1) + '%)' : '';
+    html += `<div class="stat ${delta>=0?'pos':'neg'}"><strong>${fmt(delta)}${pct}</strong> net change</div>`;
+  }
+  if (pos.length) html += `<div class="stat pos"><strong>${fmt(sumPos)}</strong> increases</div>`;
+  if (neg.length) html += `<div class="stat neg"><strong>${fmt(sumNeg)}</strong> decreases</div>`;
+  document.getElementById('statBar').innerHTML = html;
+}
+
+// ══════════════════════════════════════════
+// EXPORT
+// ══════════════════════════════════════════
+function exportPNG() {
+  // Chart.js renders at devicePixelRatio resolution already - just export directly.
+  // The 2x-scaling approach causes group bracket plugins to be clipped/repositioned incorrectly.
+  const canvas = document.getElementById('wChart');
+  const a = document.createElement('a');
+  a.download = 'waterfall-chart.png';
+
+  // Add white background (canvas is transparent by default)
+  const tmp = document.createElement('canvas');
+  tmp.width = canvas.width;
+  tmp.height = canvas.height;
+  const tc = tmp.getContext('2d');
+  tc.fillStyle = '#ffffff';
+  tc.fillRect(0, 0, tmp.width, tmp.height);
+  tc.drawImage(canvas, 0, 0);
+
+  a.href = tmp.toDataURL('image/png');
+  a.click();
+}
+
+// ══════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════
+// ── Sidebar default width = 20vw, clamped ──
+(function() {
+  const target = Math.min(520, Math.max(240, Math.round(window.innerWidth * 0.20)));
+  document.documentElement.style.setProperty('--sidebar-w', target + 'px');
+})();
+
+renderTable();
+updateChart();
+
+window.addEventListener('resize', () => {
+  if (chartInstance) chartInstance.resize();
+});
+
+document.getElementById('pasteTA').addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') parsePaste();
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeSaveModal();
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); openSaveModal(); }
+});
+
+// ── Sidebar resize ──
+(function() {
+  const resizer = document.getElementById('sidebarResizer');
+  const MIN_W = 240, MAX_W = 520;
+  let startX, startW;
+
+  resizer.addEventListener('mousedown', e => {
+    e.preventDefault();
+    startX = e.clientX;
+    startW = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w'));
+    resizer.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    function onMove(e) {
+      const newW = Math.min(MAX_W, Math.max(MIN_W, startW + (e.clientX - startX)));
+      document.documentElement.style.setProperty('--sidebar-w', newW + 'px');
+      if (chartInstance) chartInstance.resize();
+      // Re-sync table width when sidebar changes
+      const section = document.querySelector('.data-section');
+      const table = document.getElementById('dataTable');
+      if (section && table) table.style.width = (section.clientWidth - 16) + 'px';
+    }
+    function onUp() {
+      resizer.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+})();
+
+// ── Column resizers (Label and Value columns in Data table) ──
+(function() {
+  // Set initial table width to fill the data-section
+  function syncTableWidth() {
+    const section = document.querySelector('.data-section');
+    const table = document.getElementById('dataTable');
+    if (section && table) table.style.width = (section.clientWidth - 16) + 'px';
+  }
+  syncTableWidth();
+  window.addEventListener('resize', syncTableWidth);
+  // Also sync when sidebar is resized (observe --sidebar-w changes indirectly)
+  const origSidebarOnMove = window._sidebarOnMove;
+
+  function makeColResizer(resizerId, colId, minW, maxW) {
+    const handle = document.getElementById(resizerId);
+    const col = document.getElementById(colId);
+    if (!handle || !col) return;
+    let startX, startW;
+
+    handle.addEventListener('mousedown', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      startX = e.clientX;
+      startW = col.offsetWidth || parseInt(col.style.width) || 100;
+      handle.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+
+      function onMove(e) {
+        const newW = Math.min(maxW, Math.max(minW, startW + (e.clientX - startX)));
+        col.style.width = newW + 'px';
+        syncTableWidth();
+      }
+      function onUp() {
+        handle.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+
+  makeColResizer('resizerLabel', 'colLabel', 60, 280);
+  makeColResizer('resizerVal',   'colVal',   60, 160);
+})();
+
+
+</script>
+</body>
+</html>
