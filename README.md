@@ -2,7 +2,7 @@
 
 Free, browser-based waterfall (bridge) chart builder. No sign-up, no server — everything runs locally in your browser.
 
-**Live app:** https://netzel.github.io/reporting-tools/
+**Live app:** https://reportingtools.vercel.app/
 
 ![Waterfall Chart Builder preview](preview.png)
 
