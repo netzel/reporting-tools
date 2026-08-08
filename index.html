@@ -9,8 +9,8 @@
 <meta property="og:type" content="website" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Waterfall Chart Builder</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<link rel="icon" href="chart builder icon.ico">
+<script src="vendor/chart.umd.min.js"></script>
+<link rel="icon" href="icon.ico">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@300;400;500;600;700&family=Source+Serif+4:ital,wght@0,300;0,400;0,600;1,300&display=swap');
 
@@ -107,10 +107,9 @@ html, body {
   background: var(--accent);
   opacity: 0.3;
 }
-.sidebar { position: relative; }
-
 /* ─── SIDEBAR ─────────────────────────── */
 .sidebar {
+  position: relative;
   background: var(--panel);
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
@@ -927,7 +926,7 @@ canvas#wChart {
           <div class="tieout-field-row">
             <span class="tieout-field-label">Plug label</span>
             <input class="tieout-input" type="text" id="tieoutPlugLabel" value="All other, net"
-              oninput="plugLabel=this.value;renderGroups();updateChart()" placeholder="All other, net">
+              oninput="onPlugLabelInput(this.value)" placeholder="All other, net">
           </div>
           <div class="tieout-hint" id="tieoutHint"></div>
         </div>
@@ -981,7 +980,7 @@ canvas#wChart {
             </div>
             <div class="cg">
               <span class="clabel">Decimals</span>
-              <input type="number" class="cinput" id="decimals" value="1" min="0" max="4" oninput="updateChart()">
+              <input type="number" class="cinput" id="decimals" value="1" min="0" max="4" oninput="queueChartUpdate()">
             </div>
             <div class="cg">
               <span class="clabel">Bar Width %</span>
@@ -1067,15 +1066,15 @@ canvas#wChart {
             </div>
             <div class="cg full">
               <span class="clabel">Y Axis Label</span>
-              <input type="text" class="cinput" id="yAxisLabel" placeholder="e.g. USD Thousands" oninput="updateChart()">
+              <input type="text" class="cinput" id="yAxisLabel" placeholder="e.g. USD Thousands" oninput="queueChartUpdate()">
             </div>
             <div class="cg">
               <span class="clabel">Y Min</span>
-              <input type="text" class="cinput" id="yMin" placeholder="auto" oninput="updateChart()">
+              <input type="text" class="cinput" id="yMin" placeholder="auto" oninput="queueChartUpdate()">
             </div>
             <div class="cg">
               <span class="clabel">Y Max</span>
-              <input type="text" class="cinput" id="yMax" placeholder="auto" oninput="updateChart()">
+              <input type="text" class="cinput" id="yMax" placeholder="auto" oninput="queueChartUpdate()">
             </div>
           </div>
         </div>
@@ -1178,27 +1177,30 @@ canvas#wChart {
 // ══════════════════════════════════════════
 // STATE
 // ══════════════════════════════════════════
+// Rows carry a stable id so groups survive reordering/deletion.
 let rows = [
-  { label: 'FY23 Revenue',      value: 8400, type: 'anchor'   },
-  { label: 'Volume - Existing', value:  700, type: 'positive' },
-  { label: 'Price - Existing',  value:  200, type: 'positive' },
-  { label: 'New Logos',         value:  500, type: 'positive' },
-  { label: 'Churn',             value: -300, type: 'negative' },
-  { label: 'Discounts',         value: -200, type: 'negative' },
-  { label: 'Fees',              value:  100, type: 'positive' },
-  { label: 'Ad Revenue',        value:  300, type: 'positive' },
-  { label: 'Core Business',     value: null, type: 'subtotal' },
-  { label: 'Indirect Channel',  value:  300, type: 'positive' },
-  { label: 'Service Revenue',   value:  600, type: 'positive' },
-  { label: 'One-time Items',    value: -1000, type: 'negative' },
+  { id:  1, label: 'FY23 Revenue',      value: 8400, type: 'anchor'   },
+  { id:  2, label: 'Volume - Existing', value:  700, type: 'positive' },
+  { id:  3, label: 'Price - Existing',  value:  200, type: 'positive' },
+  { id:  4, label: 'New Logos',         value:  500, type: 'positive' },
+  { id:  5, label: 'Churn',             value: -300, type: 'negative' },
+  { id:  6, label: 'Discounts',         value: -200, type: 'negative' },
+  { id:  7, label: 'Fees',              value:  100, type: 'positive' },
+  { id:  8, label: 'Ad Revenue',        value:  300, type: 'positive' },
+  { id:  9, label: 'Core Business',     value: null, type: 'subtotal' },
+  { id: 10, label: 'Indirect Channel',  value:  300, type: 'positive' },
+  { id: 11, label: 'Service Revenue',   value:  600, type: 'positive' },
+  { id: 12, label: 'One-time Items',    value: -1000, type: 'negative' },
 ];
+let nextRowId = 13;
 
-// groups: array of { id, label, color, rowIndices: Set<number> }
+// groups: array of { id, label, color, rowIds: Set<number> }
+// rowIds hold row ids (not indices); -1 is the sentinel for the synthetic plug bar.
 let groups = [
-  { id: 1, label: 'Existing Customers', color: '#2d6aa0', rowIndices: new Set([1, 2]) },
-  { id: 2, label: 'Adds & Drops',       color: '#c0622a', rowIndices: new Set([3, 4]) },
-  { id: 3, label: 'All Other Revenue',  color: '#5a8a3a', rowIndices: new Set([6, 7]) },
-  { id: 4, label: 'Non-Core',           color: '#9040a0', rowIndices: new Set([9, 10, 11, -1]) },
+  { id: 1, label: 'Existing Customers', color: '#2d6aa0', rowIds: new Set([2, 3]) },
+  { id: 2, label: 'Adds & Drops',       color: '#c0622a', rowIds: new Set([4, 5]) },
+  { id: 3, label: 'All Other Revenue',  color: '#5a8a3a', rowIds: new Set([7, 8]) },
+  { id: 4, label: 'Non-Core',           color: '#9040a0', rowIds: new Set([10, 11, 12, -1]) },
 ];
 let nextGroupId = 5;
 let chartInstance = null;
@@ -1516,7 +1518,7 @@ function renderTable() {
     tr.setAttribute('draggable', false); // only enabled via grip mousedown
     tr.innerHTML = `
       <td><span class="drag-grip" title="Drag to reorder">⠿</span></td>
-      <td><input type="text" value="${escH(row.label)}" oninput="rows[${i}].label=this.value;updateChart()"></td>
+      <td><input type="text" value="${escH(row.label)}" oninput="rows[${i}].label=this.value;queueChartUpdate()"></td>
       <td>
         <input type="number" ${isAutoDisabled?'disabled placeholder="auto"':`value="${row.value ?? ''}"`}
           oninput="onValueInput(${i},this.value)">
@@ -1568,20 +1570,15 @@ function addRow(type) {
   if (type === 'positive') value = 500;
   else if (type === 'negative') value = -500;
   // anchor and subtotal default to null (auto)
-  rows.push({ label: typeLabel(type), value, type });
+  rows.push({ id: nextRowId++, label: typeLabel(type), value, type });
   renderTable(); renderGroups(); updateChart();
 }
 
 function removeRow(i) {
+  const removedId = rows[i].id;
   rows.splice(i, 1);
-  // Clean up group references
-  groups.forEach(g => { g.rowIndices.delete(i); });
-  // Re-map indices above i downward
-  groups.forEach(g => {
-    const newSet = new Set();
-    g.rowIndices.forEach(idx => { if (idx < i) newSet.add(idx); else if (idx > i) newSet.add(idx - 1); });
-    g.rowIndices = newSet;
-  });
+  // Groups reference rows by stable id — just drop the deleted one
+  groups.forEach(g => g.rowIds.delete(removedId));
   renderTable(); renderGroups(); updateChart();
 }
 
@@ -1597,8 +1594,9 @@ const SAVE_INDEX_KEY = 'wf_index';
 
 function captureState() {
   return {
-    rows: rows.map(r => ({ ...r, rowIndices: undefined })), // plain objects
-    groups: groups.map(g => ({ ...g, rowIndices: [...g.rowIndices] })),
+    rows: rows.map(r => ({ ...r })), // plain objects
+    groups: groups.map(g => ({ id: g.id, label: g.label, color: g.color, rowIds: [...g.rowIds] })),
+    nextRowId,
     nextGroupId,
     tieOutMode,
     plugLabel,
@@ -1637,8 +1635,24 @@ function captureState() {
 }
 
 function applyState(state) {
-  rows = state.rows || [];
-  groups = (state.groups || []).map(g => ({ ...g, rowIndices: new Set(g.rowIndices || []) }));
+  rows = (state.rows || []).map(r => ({ ...r }));
+
+  // Assign ids to rows from legacy saves (created before rows had stable ids)
+  let maxRowId = 0;
+  rows.forEach(r => { if (typeof r.id === 'number') maxRowId = Math.max(maxRowId, r.id); });
+  rows.forEach(r => { if (typeof r.id !== 'number') r.id = ++maxRowId; });
+
+  groups = (state.groups || []).map(g => {
+    let ids;
+    if (g.rowIds) {
+      ids = g.rowIds;
+    } else {
+      // Legacy format stored row indices; map them to the ids just assigned (order is preserved)
+      ids = (g.rowIndices || []).map(idx => idx === -1 ? -1 : rows[idx]?.id).filter(id => id !== undefined);
+    }
+    return { id: g.id, label: g.label, color: g.color, rowIds: new Set(ids) };
+  });
+  nextRowId = Math.max(maxRowId + 1, state.nextRowId || 1);
   nextGroupId = state.nextGroupId || (groups.length + 1);
   tieOutMode = state.tieOutMode ?? true;
   plugLabel = state.plugLabel || 'All other, net';
@@ -1944,7 +1958,7 @@ const GROUP_COLORS = ['#2d6aa0','#c0622a','#5a8a3a','#9040a0','#b07820','#3a8a8a
 
 function addGroup() {
   const color = GROUP_COLORS[groups.length % GROUP_COLORS.length];
-  groups.push({ id: nextGroupId++, label: 'Group ' + groups.length, color, rowIndices: new Set() });
+  groups.push({ id: nextGroupId++, label: 'Group ' + (groups.length + 1), color, rowIds: new Set() });
   renderGroups(); updateChart();
 }
 
@@ -1963,18 +1977,20 @@ function renderGroups() {
     return;
   }
 
-  // Eligible items: regular positive/negative rows, plus the synthetic plug bar (index -1) when in tie-out mode
-  const eligibleRows = rows.map((r,i) => i).filter(i => rows[i].type === 'positive' || rows[i].type === 'negative');
+  // Eligible items: regular positive/negative rows, plus the synthetic plug bar (id -1) when in tie-out mode
+  const eligibleRows = rows.filter(r => r.type === 'positive' || r.type === 'negative');
+  const rowById = new Map(rows.map(r => [r.id, r]));
 
   groups.forEach(group => {
     const card = document.createElement('div');
     card.className = 'group-card';
 
     // Compute net sum: real rows + plug bar if included
-    let netVal = [...group.rowIndices]
-      .filter(i => i >= 0 && i < rows.length && (rows[i].type === 'positive' || rows[i].type === 'negative'))
-      .reduce((s, i) => s + (parseFloat(rows[i].value) || 0), 0);
-    if (group.rowIndices.has(-1) && tieOutMode) {
+    let netVal = [...group.rowIds]
+      .map(id => rowById.get(id))
+      .filter(r => r && (r.type === 'positive' || r.type === 'negative'))
+      .reduce((s, r) => s + (parseFloat(r.value) || 0), 0);
+    if (group.rowIds.has(-1) && tieOutMode) {
       // Plug value = endVal - running total
       const endVal = parseFloat(document.getElementById('tieoutEndVal')?.value);
       let running = 0;
@@ -2006,14 +2022,14 @@ function renderGroups() {
       rowList.innerHTML = '<span class="group-empty">No eligible bars (add Increase/Decrease rows)</span>';
     } else {
       // Regular rows first
-      eligibleRows.forEach(i => {
+      eligibleRows.forEach(r => {
         const item = document.createElement('div');
         item.className = 'group-row-item';
-        const checked = group.rowIndices.has(i) ? 'checked' : '';
+        const checked = group.rowIds.has(r.id) ? 'checked' : '';
         item.innerHTML = `
-          <input type="checkbox" id="grp${group.id}-row${i}" ${checked}
-            onchange="toggleGroupRow(${group.id},${i},this.checked)">
-          <label for="grp${group.id}-row${i}">${escH(rows[i].label)}</label>`;
+          <input type="checkbox" id="grp${group.id}-row${r.id}" ${checked}
+            onchange="toggleGroupRow(${group.id},${r.id},this.checked)">
+          <label for="grp${group.id}-row${r.id}">${escH(r.label)}</label>`;
         rowList.appendChild(item);
       });
       // Plug bar row last (matches its position at the end of the chart)
@@ -2021,7 +2037,7 @@ function renderGroups() {
         const plugLabel_ = document.getElementById('tieoutPlugLabel')?.value || 'All other, net';
         const item = document.createElement('div');
         item.className = 'group-row-item';
-        const checked = group.rowIndices.has(-1) ? 'checked' : '';
+        const checked = group.rowIds.has(-1) ? 'checked' : '';
         item.innerHTML = `
           <input type="checkbox" id="grp${group.id}-plug" ${checked}
             onchange="toggleGroupRow(${group.id},-1,this.checked)">
@@ -2032,11 +2048,11 @@ function renderGroups() {
   });
 }
 
-function toggleGroupRow(groupId, rowIdx, checked) {
+function toggleGroupRow(groupId, rowId, checked) {
   const g = groups.find(g => g.id === groupId);
   if (!g) return;
-  if (checked) g.rowIndices.add(rowIdx);
-  else g.rowIndices.delete(rowIdx);
+  if (checked) g.rowIds.add(rowId);
+  else g.rowIds.delete(rowId);
   updateChart();
 }
 
@@ -2056,7 +2072,7 @@ function onTypeChange(idx, newType) {
 
 function setTieOutMode(on) {
   tieOutMode = on;
-  clearTimeout(_debounceTimer);
+  cancelDebounce('chart');
   document.getElementById('btnTieOut').classList.toggle('active', on);
   document.getElementById('btnFreeForm').classList.toggle('active', !on);
   document.getElementById('tieoutFields').style.display = on ? '' : 'none';
@@ -2067,11 +2083,16 @@ function setTieOutMode(on) {
 function onTieoutEndValInput(v) {
   updateTieoutHint();
   // Debounce chart update so mid-typing (e.g. "1" while aiming for "10000") doesn't distort the chart
-  debounce(updateChart, 400);
+  queueChartUpdate();
 }
 
 function onTieoutEndLabelInput(v) {
-  debounce(updateChart, 300);
+  queueChartUpdate(300);
+}
+
+function onPlugLabelInput(v) {
+  plugLabel = v;
+  debounce('chart', () => { renderGroups(); updateChart(); }, 400);
 }
 
 function updateTieoutHint() {
@@ -2098,7 +2119,7 @@ function updateTieoutHint() {
 
 function onGroupLabelInput(groupId, val) {
   const g = groups.find(g => g.id === groupId);
-  if (g) { g.label = val; updateChart(); }
+  if (g) { g.label = val; queueChartUpdate(); }
 }
 
 // Auto-switch positive/negative type based on value sign
@@ -2121,7 +2142,8 @@ function onValueInput(idx, rawVal) {
       if (groupTab && groupTab.classList.contains('active')) renderGroups();
     }
   }
-  updateChart();
+  updateTieoutHint();
+  queueChartUpdate();
 }
 
 // ══════════════════════════════════════════
@@ -2131,30 +2153,40 @@ function parsePaste() {
   const raw = document.getElementById('pasteTA').value.trim();
   if (!raw) return;
   const parsed = [];
-  raw.split('\n').filter(l => l.trim()).forEach(line => {
-    const parts = line.split(/\t/).map(p => p.trim());
-    let label = '', valStr = '';
-    if (parts.length >= 2) {
-      label = parts.slice(0, parts.length-1).join(' ');
-      valStr = parts[parts.length-1];
-    } else {
-      const sp = line.trim().split(/\s{2,}/);
-      label = sp.length >= 2 ? sp.slice(0, sp.length-1).join(' ') : line.trim();
-      valStr = sp.length >= 2 ? sp[sp.length-1] : '0';
-    }
+  const skipped = [];
+  raw.split('\n').forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    // Split label from value: tabs first (spreadsheet paste), otherwise any whitespace —
+    // the last token is the value, everything before it is the label.
+    const parts = trimmed.includes('\t')
+      ? trimmed.split(/\t+/).map(p => p.trim()).filter(Boolean)
+      : trimmed.split(/\s+/);
+    if (parts.length < 2) { skipped.push(trimmed); return; }
+    const label = parts.slice(0, parts.length-1).join(' ');
+    const valStr = parts[parts.length-1];
+
     const lv = valStr.toLowerCase().replace(/\s/g,'');
-    let type = 'positive', value = null;
     if (lv==='anchor'||lv==='total'||lv==='[total]'||lv==='[anchor]') {
-      type = 'anchor'; value = null;
+      parsed.push({ label, value: null, type: 'anchor' });
     } else if (lv==='subtotal'||lv==='[subtotal]') {
-      type = 'subtotal'; value = null;
+      parsed.push({ label, value: null, type: 'subtotal' });
     } else {
-      value = parseFloat(valStr.replace(/[$£€,%\s,]/g,''));
-      if (isNaN(value)) value = 0;
-      type = value < 0 ? 'negative' : 'positive';
+      // Strip currency symbols, commas, percent; accountant-style (480) means -480
+      let s = valStr.replace(/[$£€,%\s]/g,'');
+      const negParen = /^\(.+\)$/.test(s);
+      if (negParen) s = s.slice(1, -1);
+      let value = parseFloat(s);
+      if (isNaN(value)) { skipped.push(trimmed); return; }
+      if (negParen) value = -Math.abs(value);
+      parsed.push({ label, value, type: value < 0 ? 'negative' : 'positive' });
     }
-    if (label) parsed.push({ label, value, type });
   });
+  if (skipped.length) {
+    const shown = skipped.slice(0, 5).map(l => '  • ' + l).join('\n');
+    const more = skipped.length > 5 ? `\n  …and ${skipped.length - 5} more` : '';
+    alert(`Skipped ${skipped.length} line(s) — no value found:\n${shown}${more}\n\nEach line needs a label and a number (or "anchor" / "subtotal").`);
+  }
   if (!parsed.length) return;
 
   // ── Smart mode detection ──
@@ -2208,6 +2240,10 @@ function parsePaste() {
     }
   }
 
+  // Imported rows get fresh stable ids; old group memberships no longer apply
+  rows.forEach(r => { r.id = nextRowId++; });
+  groups.forEach(g => { const keepPlug = g.rowIds.has(-1); g.rowIds = new Set(keepPlug ? [-1] : []); });
+
   document.getElementById('pasteTA').value = '';
   renderTable(); renderGroups(); updateChart();
   document.querySelectorAll('.stab')[0].click();
@@ -2216,11 +2252,15 @@ function parsePaste() {
 // ══════════════════════════════════════════
 // NUMBER FORMAT
 // ══════════════════════════════════════════
-let _debounceTimer = null;
-function debounce(fn, ms) {
-  clearTimeout(_debounceTimer);
-  _debounceTimer = setTimeout(fn, ms);
+// One timer per key so unrelated debounced actions never cancel each other.
+const _debounceTimers = {};
+function debounce(key, fn, ms) {
+  clearTimeout(_debounceTimers[key]);
+  _debounceTimers[key] = setTimeout(fn, ms);
 }
+function cancelDebounce(key) { clearTimeout(_debounceTimers[key]); }
+// All typed input funnels through this: the chart redraws once typing pauses.
+function queueChartUpdate(ms = 400) { debounce('chart', updateChart, ms); }
 function fmt(val) {
   const scale = parseFloat(document.getElementById('numScale').value) || 1;
   const decimals = parseInt(document.getElementById('decimals').value) || 0;
@@ -2249,13 +2289,13 @@ function compute() {
       const hasExplicit = (row.value !== null && row.value !== undefined && row.value !== '' && !isNaN(parseFloat(row.value)));
       const anchorVal = hasExplicit ? parseFloat(row.value) : running;
       running = anchorVal;
-      result.push({ label: row.label, base: 0, size: anchorVal, type: 'anchor', raw: anchorVal, rowIdx: i });
+      result.push({ label: row.label, base: 0, size: anchorVal, type: 'anchor', raw: anchorVal, rowId: row.id });
     } else if (row.type === 'subtotal') {
-      result.push({ label: row.label, base: 0, size: running, type: 'subtotal', raw: running, rowIdx: i });
+      result.push({ label: row.label, base: 0, size: running, type: 'subtotal', raw: running, rowId: row.id });
     } else {
       const v = parseFloat(row.value) || 0;
       const base = v < 0 ? running + v : running;
-      result.push({ label: row.label, base, size: Math.abs(v), type: row.type, raw: v, rowIdx: i });
+      result.push({ label: row.label, base, size: Math.abs(v), type: row.type, raw: v, rowId: row.id });
       running += v;
     }
   }
@@ -2267,19 +2307,18 @@ function compute() {
     const endLabel = document.getElementById('tieoutEndLabel')?.value || 'Total';
     const pLabel = plugLabel || 'All other, net';
 
-    // Only insert plug/anchor if we have a valid, complete end value.
-    // Guard: skip if the field is empty, just a minus sign, or would create
-    // a plug larger than 10x the running total (user is mid-typing a large number).
+    // Only insert plug/anchor if we have a valid, complete end value
+    // (skip while the field is empty or just a minus sign mid-typing).
     const validEndVal = (endValStr.trim() !== '' && endValStr.trim() !== '-' && !isNaN(endVal));
     if (validEndVal) {
       const plugVal = endVal - running;
-      // Insert plug bar only when it's nonzero
+      // Insert plug bar only when it's nonzero. rowId -1 = plug sentinel (matches group rowIds).
       if (Math.abs(plugVal) > 0.0001) {
         const plugBase = plugVal < 0 ? running + plugVal : running;
-        result.push({ label: pLabel, base: plugBase, size: Math.abs(plugVal), type: 'plug', raw: plugVal, rowIdx: -1 });
+        result.push({ label: pLabel, base: plugBase, size: Math.abs(plugVal), type: 'plug', raw: plugVal, rowId: -1 });
       }
       // Always insert end anchor when we have a valid end value
-      result.push({ label: endLabel, base: 0, size: endVal, type: 'anchor', raw: endVal, rowIdx: -1 });
+      result.push({ label: endLabel, base: 0, size: endVal, type: 'anchor', raw: endVal, rowId: null });
     }
   }
 
@@ -2327,14 +2366,19 @@ function updateChart() {
   const bgColors = bars.map(b => hexToRgba(colorOf(b.type), 0.88));
   const bdColors = bars.map(b => hexToRgba(colorOf(b.type), 1));
 
+  // Resolve row ids → bar positions once (plug sentinel -1 included; end anchor has rowId null)
+  const rowById = new Map(rows.map(r => [r.id, r]));
+  const barIdxByRowId = new Map();
+  bars.forEach((b, i) => { if (b.rowId !== null && !barIdxByRowId.has(b.rowId)) barIdxByRowId.set(b.rowId, i); });
+
   // Active groups: must have at least one valid bar (real row OR plug bar if in tie-out mode)
   const activeGroups = groups.filter(g => {
-    const hasRealBar = [...g.rowIndices].some(i => i >= 0 && i < rows.length && (rows[i].type==='positive'||rows[i].type==='negative'));
-    const hasPlug = g.rowIndices.has(-1) && tieOutMode && bars.some(b => b.type === 'plug');
+    const hasRealBar = [...g.rowIds].some(id => { const r = rowById.get(id); return r && (r.type==='positive'||r.type==='negative'); });
+    const hasPlug = g.rowIds.has(-1) && tieOutMode && barIdxByRowId.has(-1);
     return hasRealBar || hasPlug;
   });
 
-  const bracketRows = packBrackets(activeGroups, bars);
+  const bracketRows = packBrackets(activeGroups, barIdxByRowId);
   const bracketRowCount = bracketRows.length > 0 ? Math.max(...bracketRows.map(b => b.row)) + 1 : 0;
 
   // Each bracket band = 36px (bracket line + label + value).
@@ -2456,13 +2500,10 @@ function updateChart() {
       ctx.save();
 
       bracketRows.forEach(({ group, row: rowIdx }) => {
-        // Resolve rowIndices to bar-array indices (meta.data positions)
-        // Regular rows: bar index == row index (compute() pushes one bar per row in order)
-        // Plug bar sentinel -1: bar index is bars.findIndex(b => b.type === 'plug')
-        const plugBarIdx = bars.findIndex(b => b.type === 'plug');
-        const validBarIdxs = [...group.rowIndices]
-          .map(i => i === -1 ? plugBarIdx : i)
-          .filter(i => i >= 0 && i < meta.data.length && meta.data[i]);
+        // Resolve group rowIds to bar-array indices (meta.data positions) via the id→bar map
+        const validBarIdxs = [...group.rowIds]
+          .map(id => barIdxByRowId.get(id))
+          .filter(i => i !== undefined && i < meta.data.length && meta.data[i]);
         if (validBarIdxs.length === 0) return;
 
         const sortedIdxs = [...validBarIdxs].sort((a,b) => a-b);
@@ -2480,10 +2521,12 @@ function updateChart() {
         const sumY   = bracketLineY + Math.round(gFSize * 2.3);
 
         // Net sum: real rows + plug bar if included
-        let netSum = [...group.rowIndices]
-          .filter(i => i >= 0 && i < rows.length && (rows[i].type==='positive'||rows[i].type==='negative'))
-          .reduce((s, i) => s + (parseFloat(rows[i].value)||0), 0);
-        if (group.rowIndices.has(-1) && plugBarIdx >= 0) {
+        let netSum = [...group.rowIds]
+          .map(id => rowById.get(id))
+          .filter(r => r && (r.type==='positive'||r.type==='negative'))
+          .reduce((s, r) => s + (parseFloat(r.value)||0), 0);
+        const plugBarIdx = barIdxByRowId.get(-1);
+        if (group.rowIds.has(-1) && plugBarIdx !== undefined) {
           netSum += bars[plugBarIdx].raw;
         }
 
@@ -2607,22 +2650,20 @@ function updateChart() {
     }
   });
 
-  updateLegend(cPos, cNeg, cAnchor, cSub, cPlug);
+  updateLegend();
   updateStats(bars);
   updateTieoutHint();
   } catch(e) { console.error('Chart render error:', e); }
 }
 
 // ── Pack brackets into rows (greedy interval packing, non-overlapping) ──
-function packBrackets(activeGroups, barsSnapshot) {
+function packBrackets(activeGroups, barIdxByRowId) {
   if (activeGroups.length === 0) return [];
-  // Resolve -1 (plug bar sentinel) to its actual index in the bars array
-  const plugBarIdx = barsSnapshot ? barsSnapshot.findIndex(b => b.type === 'plug') : -1;
 
   const brackets = activeGroups.map(group => {
-    const idxs = [...group.rowIndices]
-      .map(i => i === -1 ? plugBarIdx : i)
-      .filter(i => i >= 0)
+    const idxs = [...group.rowIds]
+      .map(id => barIdxByRowId.get(id))
+      .filter(i => i !== undefined)
       .sort((a,b) => a-b);
     if (idxs.length === 0) return null;
     return { group, start: idxs[0], end: idxs[idxs.length-1] };
@@ -2644,18 +2685,23 @@ function packBrackets(activeGroups, barsSnapshot) {
   return result;
 }
 
-function updateLegend(cPos, cNeg, cAnchor, cSub, cPlug) {
+// Legend entries for the current chart — shared by the on-page legend and the PNG export
+function legendItems(bars) {
+  const types = bars.map(b => b.type);
+  const items = [];
+  if (types.includes('positive')) items.push(['Increase', _cpColors.cPos]);
+  if (types.includes('negative')) items.push(['Decrease', _cpColors.cNeg]);
+  if (types.includes('anchor'))   items.push(['Anchor',   _cpColors.cAnchor]);
+  if (types.includes('subtotal')) items.push(['Subtotal', _cpColors.cSub]);
+  if (types.includes('plug'))     items.push([plugLabel || 'All other, net', _cpColors.cPlug]);
+  return items;
+}
+
+function updateLegend() {
   const showLegend = document.getElementById('showLegend').checked;
   const row = document.getElementById('legendRow');
   if (!showLegend) { row.innerHTML = ''; return; }
-  const bars = compute();
-  const types = bars.map(r => r.type);
-  const items = [];
-  if (types.includes('positive')) items.push(['Increase', cPos]);
-  if (types.includes('negative')) items.push(['Decrease', cNeg]);
-  if (types.includes('anchor'))   items.push(['Anchor',   cAnchor]);
-  if (types.includes('subtotal')) items.push(['Subtotal', cSub]);
-  if (types.includes('plug'))     items.push([plugLabel || 'All other, net', cPlug]);
+  const items = legendItems(compute());
   row.innerHTML = items.map(([label, color]) =>
     `<div class="legend-item">
       <div class="legend-swatch" style="background:${color}"></div>
@@ -2686,22 +2732,77 @@ function updateStats(bars) {
 // EXPORT
 // ══════════════════════════════════════════
 function exportPNG() {
-  // Chart.js renders at devicePixelRatio resolution already - just export directly.
-  // The 2x-scaling approach causes group bracket plugins to be clipped/repositioned incorrectly.
+  // Compose the full chart card: title + subtitle above, legend + footnote below.
+  // The chart canvas is already rendered at devicePixelRatio resolution, so all
+  // text/spacing here is scaled by the same factor to match.
   const canvas = document.getElementById('wChart');
+  if (!canvas.width || !canvas.height) return;
+  const scale = canvas.clientWidth ? canvas.width / canvas.clientWidth : (window.devicePixelRatio || 1);
+  const px = n => Math.round(n * scale);
+
+  const title    = document.getElementById('chartTitleInline')?.value.trim() || '';
+  const subtitle = document.getElementById('chartSubtitleInline')?.value.trim() || '';
+  const footnote = document.getElementById('chartFootnote')?.value.trim() || '';
+  const items    = document.getElementById('showLegend').checked ? legendItems(compute()) : [];
+
+  const pad = px(24);
+  const titleFS = px(20), subFS = px(13), legFS = px(11), footFS = px(10);
+  const W = canvas.width + pad * 2;
+  const headerH = (title ? titleFS + px(6) : 0) + (subtitle ? subFS + px(4) : 0) + ((title || subtitle) ? px(10) : 0);
+  const footerH = (items.length ? legFS + px(12) : 0) + (footnote ? footFS + px(10) : 0);
+  const H = pad + headerH + canvas.height + footerH + pad;
+
+  const out = document.createElement('canvas');
+  out.width = W; out.height = H;
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+  ctx.textBaseline = 'top';
+
+  let y = pad;
+  if (title) {
+    ctx.fillStyle = '#1c1c1e';
+    ctx.font = `600 ${titleFS}px 'Source Serif 4', serif`;
+    ctx.fillText(title, pad, y);
+    y += titleFS + px(6);
+  }
+  if (subtitle) {
+    ctx.fillStyle = '#8a8a94';
+    ctx.font = `300 ${subFS}px 'Libre Franklin', sans-serif`;
+    ctx.fillText(subtitle, pad, y);
+    y += subFS + px(4);
+  }
+  if (title || subtitle) y += px(10);
+
+  ctx.drawImage(canvas, pad, y);
+  y += canvas.height;
+
+  if (items.length) {
+    y += px(6);
+    ctx.font = `500 ${legFS}px 'Libre Franklin', sans-serif`;
+    let x = pad;
+    const sw = px(11);
+    items.forEach(([label, color]) => {
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y + px(1), sw, sw);
+      x += sw + px(5);
+      ctx.fillStyle = '#4a4a52';
+      ctx.fillText(label, x, y);
+      x += ctx.measureText(label).width + px(16);
+    });
+    y += legFS + px(6);
+  }
+  if (footnote) {
+    y += px(4);
+    ctx.fillStyle = '#8a8a94';
+    ctx.font = `400 ${footFS}px 'Libre Franklin', sans-serif`;
+    ctx.fillText(footnote, pad, y);
+  }
+
   const a = document.createElement('a');
-  a.download = 'waterfall-chart.png';
-
-  // Add white background (canvas is transparent by default)
-  const tmp = document.createElement('canvas');
-  tmp.width = canvas.width;
-  tmp.height = canvas.height;
-  const tc = tmp.getContext('2d');
-  tc.fillStyle = '#ffffff';
-  tc.fillRect(0, 0, tmp.width, tmp.height);
-  tc.drawImage(canvas, 0, 0);
-
-  a.href = tmp.toDataURL('image/png');
+  const slug = title ? title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() : '';
+  a.download = (slug || 'waterfall-chart') + '.png';
+  a.href = out.toDataURL('image/png');
   a.click();
 }
 
@@ -2726,7 +2827,14 @@ document.getElementById('pasteTA').addEventListener('keydown', e => {
 });
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeSaveModal();
+  if (e.key === 'Escape') {
+    closeSaveModal();
+    const pop = document.getElementById('cpPopover');
+    if (pop.classList.contains('open')) {
+      pop.classList.remove('open');
+      _cp.targetId = null; _cp.groupId = null;
+    }
+  }
   if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); openSaveModal(); }
 });
 
