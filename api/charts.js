@@ -6,7 +6,14 @@ import { getUserId } from './_lib/auth.js';
 const MAX_STATE_BYTES = 1_000_000;
 const MAX_THUMB_BYTES = 300_000;
 const MAX_NAME_LEN = 200;
-const MAX_ID_LEN = 100;
+// Chart ids are app-generated ("wf_<timestamp>"); constrain the shape so a
+// crafted id can never carry markup into the client that renders it.
+const CHART_ID_RE = /^[A-Za-z0-9_-]{1,100}$/;
+// Thumbnails are rendered as image sources — only base64 image data URLs.
+const THUMB_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+// Ceiling on stored charts per account: well above real use, low enough that
+// a scripted account cannot fill the database.
+const MAX_CHARTS_PER_USER = 300;
 
 export default async function handler(req, res) {
   if (!process.env.DATABASE_URL) {
@@ -37,6 +44,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'GET') {
+      if (!CHART_ID_RE.test(id)) return res.status(400).json({ error: 'Invalid chart id' });
       const rows = await sql`
         select id, name, state, updated_at
         from charts where user_id = ${userId} and id = ${id}`;
@@ -52,11 +60,21 @@ export default async function handler(req, res) {
       const state = body.state;
       const thumbnail = typeof body.thumbnail === 'string' ? body.thumbnail : null;
 
-      if (!chartId || chartId.length > MAX_ID_LEN) return res.status(400).json({ error: 'Invalid chart id' });
+      if (!CHART_ID_RE.test(chartId)) return res.status(400).json({ error: 'Invalid chart id' });
       if (!name || name.length > MAX_NAME_LEN) return res.status(400).json({ error: 'Invalid chart name' });
       if (!state || typeof state !== 'object' || Array.isArray(state)) return res.status(400).json({ error: 'Invalid chart state' });
       if (JSON.stringify(state).length > MAX_STATE_BYTES) return res.status(400).json({ error: 'Chart state too large' });
       if (thumbnail && thumbnail.length > MAX_THUMB_BYTES) return res.status(400).json({ error: 'Thumbnail too large' });
+      if (thumbnail && !THUMB_RE.test(thumbnail)) return res.status(400).json({ error: 'Invalid thumbnail format' });
+
+      // Cap stored charts per account. Updates to an existing chart are
+      // always allowed; only brand-new charts can hit the ceiling.
+      const [{ count }] = await sql`
+        select count(*)::int as count from charts
+        where user_id = ${userId} and id <> ${chartId}`;
+      if (count >= MAX_CHARTS_PER_USER) {
+        return res.status(409).json({ error: `Chart limit reached (${MAX_CHARTS_PER_USER}). Delete a saved chart to make room.` });
+      }
 
       await sql`
         insert into charts (user_id, id, name, state, thumbnail, updated_at)
@@ -70,7 +88,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'DELETE') {
-      if (!id) return res.status(400).json({ error: 'Missing chart id' });
+      if (!id || !CHART_ID_RE.test(id)) return res.status(400).json({ error: 'Missing or invalid chart id' });
       await sql`delete from charts where user_id = ${userId} and id = ${id}`;
       return res.status(204).end();
     }
