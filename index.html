@@ -10,6 +10,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Waterfall Chart Builder</title>
 <script src="vendor/chart.umd.min.js"></script>
+<script src="vendor/neon-auth.js" defer></script>
 <link rel="icon" href="icon.ico">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@300;400;500;600;700&family=Source+Serif+4:ital,wght@0,300;0,400;0,600;1,300&display=swap');
@@ -843,6 +844,44 @@ canvas#wChart {
   border-radius: 3px; line-height: 1.4;
 }
 .saved-del:hover { color: var(--negative); border-color: var(--negative); background: white; }
+
+/* ─── ACCOUNT / SIGN-IN ──────────────── */
+.auth-user {
+  font-size: 11px; color: rgba(255,255,255,0.75);
+  max-width: 180px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+  align-self: center;
+}
+
+.auth-sub {
+  font-size: 12px; color: var(--text-mid);
+  margin: -6px 0 14px; line-height: 1.5;
+}
+
+.auth-divider {
+  display: flex; align-items: center; gap: 10px;
+  margin: 14px 0 12px;
+  color: var(--text-muted); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.auth-divider::before, .auth-divider::after {
+  content: ''; flex: 1; height: 1px; background: var(--border);
+}
+
+.auth-google {
+  width: 100%; padding: 9px;
+  border: 1px solid var(--border2); border-radius: 4px;
+  background: var(--panel); color: var(--text);
+  font-family: 'Libre Franklin', sans-serif;
+  font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: all 0.15s;
+}
+.auth-google:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+
+.auth-error {
+  color: var(--negative); font-size: 11px;
+  margin-top: 10px; min-height: 14px; line-height: 1.4;
+}
 </style>
 </head>
 <body>
@@ -856,8 +895,15 @@ canvas#wChart {
   <div class="topbar-actions">
     <button class="tbtn" onclick="openSaveModal()">💾 Save</button>
     <button class="tbtn" onclick="exportPNG()">Export PNG</button>
+    <button class="tbtn" onclick="exportJSON()" title="Download this chart as a .json file you can import on any computer">⤓ JSON</button>
+    <button class="tbtn" onclick="document.getElementById('importJsonFile').click()" title="Import a chart .json file">⤒ Import</button>
     <button class="tbtn primary" onclick="clearAll()">Clear All</button>
+    <div class="topbar-sep" id="authSep" style="display:none"></div>
+    <span class="auth-user" id="authUserLabel" style="display:none"></span>
+    <button class="tbtn" id="authBtn" style="display:none" onclick="onAuthButton()">Sign in</button>
   </div>
+  <input type="file" id="importJsonFile" accept=".json,application/json" style="display:none"
+    onchange="importJSONFile(this.files[0]);this.value=''">
 </header>
 
 <!-- SIDEBAR -->
@@ -1155,6 +1201,35 @@ canvas#wChart {
   <div class="cp-hex-row">
     <span class="cp-hex-label">Hex</span>
     <input type="text" id="cpHex" maxlength="7" placeholder="#000000">
+  </div>
+</div>
+
+<!-- SIGN-IN MODAL -->
+<div class="modal-overlay" id="authModal" onclick="if(event.target===this)closeAuthModal()">
+  <div class="modal">
+    <div class="modal-title">Sign in</div>
+    <p class="auth-sub">Save charts to your account and open them from any computer.</p>
+    <div id="authStepEmail">
+      <label class="modal-label" for="authEmail">Email</label>
+      <input class="modal-input" id="authEmail" type="email" placeholder="you@example.com"
+        onkeydown="if(event.key==='Enter')sendOtp()">
+      <div class="modal-actions">
+        <button class="modal-btn cancel" onclick="closeAuthModal()">Cancel</button>
+        <button class="modal-btn save" id="btnSendOtp" onclick="sendOtp()">Email me a code</button>
+      </div>
+    </div>
+    <div id="authStepCode" style="display:none">
+      <label class="modal-label" for="authOtp">Code sent to <span id="authEmailEcho"></span></label>
+      <input class="modal-input" id="authOtp" inputmode="numeric" autocomplete="one-time-code" placeholder="123456"
+        onkeydown="if(event.key==='Enter')verifyOtp()">
+      <div class="modal-actions">
+        <button class="modal-btn cancel" onclick="backToEmail()">Back</button>
+        <button class="modal-btn save" id="btnVerifyOtp" onclick="verifyOtp()">Verify &amp; sign in</button>
+      </div>
+    </div>
+    <div class="auth-divider"><span>or</span></div>
+    <button class="auth-google" onclick="signInGoogle()">Continue with Google</button>
+    <div class="auth-error" id="authError"></div>
   </div>
 </div>
 
@@ -1764,6 +1839,55 @@ async function setSaveIndex(index) {
   try { await store.set(SAVE_INDEX_KEY, JSON.stringify(index)); } catch(e) {}
 }
 
+// ── Data layer: charts live in localStorage (anonymous) or the cloud API (signed in) ──
+// Both implementations expose the same interface:
+//   list() → [{id, name, updatedAt, thumbnail?}], get(id) → state object,
+//   save(id, name, state, thumbnail), remove(id), thumb(id)
+const localData = {
+  async list() { return await getSaveIndex(); },
+  async get(id) {
+    let raw = await store.get('wf_chart_' + id);
+    if (!raw) raw = await store.get('chart:' + id).catch(() => null); // legacy key format
+    return raw ? JSON.parse(raw) : null;
+  },
+  async save(id, name, state, thumbnail) {
+    await store.set('wf_chart_' + id, JSON.stringify(state));
+    if (thumbnail) { try { await store.set('wf_thumb_' + id, thumbnail); } catch(e) {} }
+    const index = await getSaveIndex();
+    const i = index.findIndex(e => e.id === id);
+    const now = new Date().toISOString();
+    if (i !== -1) { index[i].name = name; index[i].updatedAt = now; }
+    else index.push({ id, name, updatedAt: now });
+    await setSaveIndex(index);
+  },
+  async remove(id) {
+    await store.del('wf_chart_' + id);
+    try { await store.del('wf_thumb_' + id); } catch(e) {}
+    const index = await getSaveIndex();
+    await setSaveIndex(index.filter(e => e.id !== id));
+  },
+  async thumb(id) {
+    try { return await store.get('wf_thumb_' + id); } catch { return null; }
+  }
+};
+
+const cloudData = {
+  async list() { return await apiFetch('/api/charts'); }, // entries carry thumbnail inline
+  async get(id) {
+    const r = await apiFetch('/api/charts?id=' + encodeURIComponent(id));
+    return r ? r.state : null;
+  },
+  async save(id, name, state, thumbnail) {
+    await apiFetch('/api/charts', { method: 'POST', body: JSON.stringify({ id, name, state, thumbnail }) });
+  },
+  async remove(id) {
+    await apiFetch('/api/charts?id=' + encodeURIComponent(id), { method: 'DELETE' });
+  },
+  async thumb() { return null; }
+};
+
+function dataAPI() { return authUser ? cloudData : localData; }
+
 // ── Modal ──
 function openSaveModal() {
   const modal = document.getElementById('saveModal');
@@ -1776,10 +1900,10 @@ function openSaveModal() {
   const chartTitle = document.getElementById('chartTitleInline')?.value?.trim();
   if (currentSaveId) {
     // Find the existing name
-    getSaveIndex().then(index => {
+    dataAPI().list().then(index => {
       const entry = index.find(e => e.id === currentSaveId);
       nameInput.value = entry ? entry.name : (chartTitle || '');
-    });
+    }).catch(() => { nameInput.value = chartTitle || ''; });
     title.textContent = 'Save Chart';
     btnSave.textContent = 'Save';
     btnSaveAs.style.display = '';
@@ -1804,14 +1928,10 @@ async function doSave() {
   if (!name) { document.getElementById('saveNameInput').focus(); return; }
 
   const state = captureState();
-  const now = new Date().toISOString();
-  let index = await getSaveIndex();
-
-  // Use existing ID or create a new one
   const saveId = currentSaveId || ('wf_' + Date.now());
 
-  // Capture thumbnail separately (kept out of the index to keep it small)
-  let thumbnail = '';
+  // Thumbnail capture — failure here is non-fatal
+  let thumbnail = null;
   try {
     const src = document.getElementById('wChart');
     if (src && src.width > 0) {
@@ -1826,30 +1946,11 @@ async function doSave() {
     }
   } catch(e) {}
 
-  // Save chart data first — if this fails, abort
   try {
-    await store.set('wf_chart_' + saveId, JSON.stringify(state));
+    await dataAPI().save(saveId, name, state, thumbnail);
   } catch(e) { alert('Save failed: ' + e.message); return; }
 
-  // Save thumbnail separately — failure here is non-fatal
-  if (thumbnail) {
-    try { await store.set('wf_thumb_' + saveId, thumbnail); } catch(e) {}
-  }
-
-  // Update index (lean — no thumbnail blob here)
-  if (currentSaveId) {
-    const i = index.findIndex(e => e.id === saveId);
-    if (i !== -1) { index[i].name = name; index[i].updatedAt = now; }
-    else { index.push({ id: saveId, name, updatedAt: now }); }
-  } else {
-    index.push({ id: saveId, name, updatedAt: now });
-  }
-
-  try {
-    await setSaveIndex(index);
-  } catch(e) { alert('Save failed (index): ' + e.message); return; }
-
-  // Only update currentSaveId after everything succeeded
+  // Only update currentSaveId after the save succeeded
   currentSaveId = saveId;
   closeSaveModal();
   renderSavedList();
@@ -1864,11 +1965,8 @@ async function doSaveAs() {
 
 async function loadChart(id) {
   try {
-    let raw = await store.get('wf_chart_' + id);
-    // Fallback: try legacy key format (chart:wf_... or chart:...)
-    if (!raw) raw = await store.get('chart:' + id).catch(() => null);
-    if (!raw) { alert('Chart data not found. It may have been saved in a previous session before a storage format change.'); return; }
-    const state = JSON.parse(raw);
+    const state = await dataAPI().get(id);
+    if (!state) { alert('Chart data not found. It may have been saved in a previous session before a storage format change.'); return; }
     currentSaveId = id;
     applyState(state);
     document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
@@ -1885,24 +1983,25 @@ async function deleteChart(id, e) {
   e.stopPropagation();
   if (!confirm('Delete this saved chart?')) return;
   try {
-    await store.del('wf_chart_' + id);
-    try { await store.del('wf_thumb_' + id); } catch(e) {}
-    let index = await getSaveIndex();
-    index = index.filter(e => e.id !== id);
-    await setSaveIndex(index);
+    await dataAPI().remove(id);
     if (currentSaveId === id) currentSaveId = null;
     renderSavedList();
-  } catch(e) { alert('Delete failed.'); }
+  } catch(err) { alert('Delete failed: ' + err.message); }
 }
 
 async function renderSavedList() {
   const container = document.getElementById('savedList');
   if (!container) return;
   let index;
-  try { index = await getSaveIndex(); } catch { index = []; }
+  try { index = await dataAPI().list(); }
+  catch (e) {
+    container.innerHTML = '<div class="saved-empty">Could not load your charts.<br>' + escH(e.message) + '</div>';
+    return;
+  }
 
   if (!index.length) {
-    container.innerHTML = '<div class="saved-empty">No saved charts yet.<br>Click <strong>Save</strong> in the top bar to save your current chart.</div>';
+    const where = authUser ? 'No charts in your account yet.' : 'No saved charts yet.';
+    container.innerHTML = '<div class="saved-empty">' + where + '<br>Click <strong>Save</strong> in the top bar to save your current chart.</div>';
     return;
   }
 
@@ -1933,10 +2032,10 @@ async function renderSavedList() {
     card.addEventListener('click', () => loadChart(entry.id));
     list.appendChild(card);
 
-    // Load thumbnail asynchronously and fill in when ready
-    ;(async (id) => {
+    // Thumbnail: cloud entries carry it inline; local entries load it async
+    ;(async (id, inline) => {
       try {
-        const thumb = await store.get('wf_thumb_' + id);
+        const thumb = inline || await dataAPI().thumb(id);
         if (thumb) {
           const el = document.getElementById('thumb-' + id);
           if (el) {
@@ -1945,7 +2044,7 @@ async function renderSavedList() {
           }
         }
       } catch(e) {}
-    })(entry.id);
+    })(entry.id, entry.thumbnail);
   }
 
   container.appendChild(list);
@@ -2807,6 +2906,206 @@ function exportPNG() {
 }
 
 // ══════════════════════════════════════════
+// JSON EXPORT / IMPORT
+// ══════════════════════════════════════════
+function exportJSON() {
+  const state = captureState();
+  const title = document.getElementById('chartTitleInline')?.value.trim();
+  const name = title || 'waterfall-chart';
+  const payload = { app: 'waterfall-chart-builder', version: 1, name, savedAt: new Date().toISOString(), state };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  const slug = name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'waterfall-chart';
+  a.download = slug + '.waterfall.json';
+  a.href = URL.createObjectURL(blob);
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function importJSONFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      // Accept both the wrapped export format and a bare state object
+      const state = (parsed && parsed.app === 'waterfall-chart-builder') ? parsed.state : parsed;
+      if (!state || !Array.isArray(state.rows)) throw new Error('not a recognized chart file');
+      currentSaveId = null;
+      applyState(state);
+    } catch (e) { alert('Could not import: ' + e.message); }
+  };
+  reader.onerror = () => alert('Could not read the file.');
+  reader.readAsText(file);
+}
+
+// ══════════════════════════════════════════
+// ACCOUNT / CLOUD SYNC (Neon Auth)
+// Anonymous users keep localStorage exactly as before; signing in switches
+// the data layer to the /api/charts backend. If the API or auth service is
+// absent (e.g. running from a plain static host), the Sign in button hides
+// and the app is local-only.
+// ══════════════════════════════════════════
+let authClient = null;  // Neon Auth SDK client (null = cloud sync unavailable)
+let authUser = null;    // signed-in user object, or null
+
+async function initAuth() {
+  try {
+    if (!window.NeonAuth) return;
+    const r = await fetch('/api/config');
+    if (!r.ok) return;
+    const cfg = await r.json();
+    if (!cfg.authUrl) return;
+    authClient = NeonAuth.createAuthClient(cfg.authUrl);
+    const s = await authClient.getSession();
+    authUser = s?.data?.user || null;
+  } catch (e) {
+    console.warn('Cloud sync unavailable:', e);
+    authClient = null; authUser = null;
+  }
+  renderAuthUI();
+  if (authUser) renderSavedList();
+}
+
+function renderAuthUI() {
+  const btn = document.getElementById('authBtn');
+  const label = document.getElementById('authUserLabel');
+  const sep = document.getElementById('authSep');
+  if (!btn) return;
+  if (!authClient) { btn.style.display = 'none'; label.style.display = 'none'; sep.style.display = 'none'; return; }
+  btn.style.display = ''; sep.style.display = '';
+  if (authUser) {
+    btn.textContent = 'Sign out';
+    label.style.display = '';
+    label.textContent = authUser.email || authUser.name || 'Signed in';
+    label.title = label.textContent;
+  } else {
+    btn.textContent = 'Sign in';
+    label.style.display = 'none';
+  }
+}
+
+function onAuthButton() { authUser ? doSignOut() : openAuthModal(); }
+
+async function doSignOut() {
+  try { await authClient.signOut(); } catch (e) {}
+  authUser = null;
+  currentSaveId = null;
+  renderAuthUI();
+  renderSavedList();
+}
+
+function openAuthModal() {
+  document.getElementById('authError').textContent = '';
+  document.getElementById('authStepEmail').style.display = '';
+  document.getElementById('authStepCode').style.display = 'none';
+  document.getElementById('authModal').classList.add('open');
+  setTimeout(() => document.getElementById('authEmail').focus(), 50);
+}
+function closeAuthModal() { document.getElementById('authModal').classList.remove('open'); }
+function backToEmail() {
+  document.getElementById('authError').textContent = '';
+  document.getElementById('authStepCode').style.display = 'none';
+  document.getElementById('authStepEmail').style.display = '';
+  setTimeout(() => document.getElementById('authEmail').focus(), 50);
+}
+
+function authFail(e, fallback) {
+  const msg = e?.error?.message || e?.message || fallback;
+  document.getElementById('authError').textContent = msg || fallback;
+}
+
+async function sendOtp() {
+  const email = document.getElementById('authEmail').value.trim();
+  if (!/.+@.+\..+/.test(email)) { document.getElementById('authError').textContent = 'Enter a valid email address.'; return; }
+  const btn = document.getElementById('btnSendOtp');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  document.getElementById('authError').textContent = '';
+  try {
+    const r = await authClient.emailOtp.sendVerificationOtp({ email, type: 'sign-in' });
+    if (r?.error) throw r;
+    document.getElementById('authEmailEcho').textContent = email;
+    document.getElementById('authStepEmail').style.display = 'none';
+    document.getElementById('authStepCode').style.display = '';
+    setTimeout(() => document.getElementById('authOtp').focus(), 50);
+  } catch (e) { authFail(e, 'Could not send the code — try again.'); }
+  btn.disabled = false; btn.textContent = 'Email me a code';
+}
+
+async function verifyOtp() {
+  const email = document.getElementById('authEmail').value.trim();
+  const otp = document.getElementById('authOtp').value.trim();
+  if (!otp) return;
+  const btn = document.getElementById('btnVerifyOtp');
+  btn.disabled = true; btn.textContent = 'Verifying…';
+  document.getElementById('authError').textContent = '';
+  try {
+    const r = await authClient.signIn.emailOtp({ email, otp });
+    if (r?.error) throw r;
+    await onSignedIn();
+  } catch (e) { authFail(e, 'Invalid or expired code.'); }
+  btn.disabled = false; btn.textContent = 'Verify & sign in';
+}
+
+async function signInGoogle() {
+  document.getElementById('authError').textContent = '';
+  try {
+    const r = await authClient.signIn.social({ provider: 'google', callbackURL: window.location.href });
+    if (r?.error) throw r;
+    // Popup flows resolve without a page reload — poll once for the session
+    setTimeout(async () => {
+      try {
+        const s = await authClient.getSession();
+        if (s?.data?.user) await onSignedIn();
+      } catch (e) {}
+    }, 1500);
+  } catch (e) { authFail(e, 'Google sign-in failed — the provider may not be configured yet.'); }
+}
+
+async function onSignedIn() {
+  const s = await authClient.getSession();
+  authUser = s?.data?.user || null;
+  closeAuthModal();
+  renderAuthUI();
+  if (!authUser) return;
+  // One-time offer: copy locally saved charts into the account
+  try {
+    const localCharts = await localData.list();
+    if (localCharts.length && confirm(`Copy ${localCharts.length} locally saved chart(s) to your account?`)) {
+      for (const entry of localCharts) {
+        const state = await localData.get(entry.id);
+        if (!state) continue;
+        const thumb = await localData.thumb(entry.id);
+        await cloudData.save(entry.id, entry.name, state, thumb);
+      }
+    }
+  } catch (e) {
+    console.warn('Local chart import failed:', e);
+    alert('Some local charts could not be copied to your account: ' + e.message);
+  }
+  renderSavedList();
+}
+
+// Authenticated fetch against our own /api endpoints (bearer JWT from Neon Auth)
+async function apiFetch(path, opts = {}) {
+  const token = await authClient.getJWTToken();
+  const r = await fetch(path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token, ...(opts.headers || {}) },
+  });
+  if (r.status === 401) {
+    authUser = null; renderAuthUI();
+    throw new Error('Your session expired — please sign in again.');
+  }
+  if (!r.ok) {
+    let msg = 'Request failed (' + r.status + ')';
+    try { const j = await r.json(); if (j.error) msg = j.error; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+// ══════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════
 // ── Sidebar default width = 20vw, clamped ──
@@ -2817,6 +3116,10 @@ function exportPNG() {
 
 renderTable();
 updateChart();
+
+// Deferred vendor scripts (neon-auth.js) run before DOMContentLoaded fires,
+// so window.NeonAuth is guaranteed to exist (or be absent) by then.
+document.addEventListener('DOMContentLoaded', initAuth);
 
 window.addEventListener('resize', () => {
   if (chartInstance) chartInstance.resize();
@@ -2829,6 +3132,7 @@ document.getElementById('pasteTA').addEventListener('keydown', e => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeSaveModal();
+    closeAuthModal();
     const pop = document.getElementById('cpPopover');
     if (pop.classList.contains('open')) {
       pop.classList.remove('open');

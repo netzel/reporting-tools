@@ -1,0 +1,10 @@
+{
+  "name": "reporting-tools",
+  "private": true,
+  "type": "module",
+  "description": "Waterfall Chart Builder — static app plus Vercel serverless API for cloud-saved charts",
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "jose": "^6.2.8"
+  }
+}
