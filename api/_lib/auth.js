@@ -23,16 +23,20 @@ function looksLikeJwt(token) {
   return token.split('.').length === 3;
 }
 
+// Pin to asymmetric signature algorithms. Without this a token could name
+// its own algorithm, which is the classic JWT confusion attack.
+const JWT_OPTS = { algorithms: ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'EdDSA'] };
+
 async function verifyJwt(token, base) {
   if (cachedJwks) {
-    const { payload } = await jwtVerify(token, cachedJwks);
+    const { payload } = await jwtVerify(token, cachedJwks, JWT_OPTS);
     return payload;
   }
   let lastErr = null;
   for (const url of jwksCandidates(base)) {
     const jwks = createRemoteJWKSet(new URL(url));
     try {
-      const { payload } = await jwtVerify(token, jwks);
+      const { payload } = await jwtVerify(token, jwks, JWT_OPTS);
       cachedJwks = jwks;
       return payload;
     } catch (e) {

@@ -1595,7 +1595,7 @@ function renderTable() {
       <td><span class="drag-grip" title="Drag to reorder">⠿</span></td>
       <td><input type="text" value="${escH(row.label)}" oninput="rows[${i}].label=this.value;queueChartUpdate()"></td>
       <td>
-        <input type="number" ${isAutoDisabled?'disabled placeholder="auto"':`value="${row.value ?? ''}"`}
+        <input type="number" ${isAutoDisabled?'disabled placeholder="auto"':`value="${escH(row.value ?? '')}"`}
           oninput="onValueInput(${i},this.value)">
       </td>
       <td>
@@ -1637,7 +1637,9 @@ function renderTable() {
 }
 
 function escH(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')
+    .replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 function addRow(type) {
@@ -1709,15 +1711,123 @@ function captureState() {
   };
 }
 
-function applyState(state) {
-  rows = (state.rows || []).map(r => ({ ...r }));
+// ── Untrusted-state sanitizer ──────────────────────────────────────────
+// Chart state can arrive from a .json file someone was handed, or from the
+// API. Neither is trustworthy: several state fields are interpolated into
+// HTML attributes and inline handlers when rendering, so a hostile file
+// could otherwise smuggle in script. Everything is coerced to a known
+// shape here, at the single chokepoint every load path goes through.
+const ROW_TYPES = ['positive', 'negative', 'anchor', 'subtotal'];
+const NUM_FORMATS = ['number', 'currency', 'currency_gbp', 'currency_eur', 'percent'];
+const NUM_SCALES = ['1', '1000', '1000000', '1000000000'];
+const MAX_ROWS = 500, MAX_GROUPS = 100, MAX_TEXT = 500;
+
+function safeText(v, max = MAX_TEXT) {
+  if (v === null || v === undefined) return '';
+  return String(v).slice(0, max);
+}
+// Only literal hex colors are accepted; anything else falls back. This keeps
+// CSS functions (url(), expression()) and attribute-breaking quotes out.
+function safeColor(v, fallback = '#888888') {
+  return (typeof v === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(v.trim())) ? v.trim() : fallback;
+}
+function safeNum(v, fallback = null) {
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+function safeInt(v, fallback, min, max) {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+function safeBool(v, fallback) { return typeof v === 'boolean' ? v : fallback; }
+function safeEnum(v, allowed, fallback) { return allowed.includes(v) ? v : fallback; }
+// Numeric-looking free-text fields (y-axis bounds) — keep blank or a number
+function safeNumText(v) {
+  if (v === null || v === undefined || String(v).trim() === '') return '';
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? String(n) : '';
+}
+function safeDataImage(v) {
+  return (typeof v === 'string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]*$/.test(v)) ? v : null;
+}
+
+function sanitizeState(raw) {
+  const s = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+  const style = (s.style && typeof s.style === 'object' && !Array.isArray(s.style)) ? s.style : {};
+
+  const rows = (Array.isArray(s.rows) ? s.rows : [])
+    .slice(0, MAX_ROWS)
+    .filter(r => r && typeof r === 'object' && !Array.isArray(r))
+    .map(r => ({
+      id: safeNum(r.id, null),
+      label: safeText(r.label),
+      value: safeNum(r.value, null),
+      type: safeEnum(r.type, ROW_TYPES, 'positive'),
+    }));
+
+  const groups = (Array.isArray(s.groups) ? s.groups : [])
+    .slice(0, MAX_GROUPS)
+    .filter(g => g && typeof g === 'object' && !Array.isArray(g))
+    .map(g => ({
+      id: safeNum(g.id, null),
+      label: safeText(g.label),
+      color: safeColor(g.color, '#2d6aa0'),
+      // Keep whichever id list is present; both are numeric-only after this
+      rowIds: Array.isArray(g.rowIds) ? g.rowIds.map(n => safeNum(n, null)).filter(n => n !== null) : undefined,
+      rowIndices: Array.isArray(g.rowIndices) ? g.rowIndices.map(n => safeNum(n, null)).filter(n => n !== null) : undefined,
+    }));
+
+  return {
+    rows, groups,
+    nextRowId: safeNum(s.nextRowId, null),
+    nextGroupId: safeNum(s.nextGroupId, null),
+    tieOutMode: safeBool(s.tieOutMode, true),
+    plugLabel: safeText(s.plugLabel),
+    tieoutEndVal: safeNumText(s.tieoutEndVal),
+    tieoutEndLabel: safeText(s.tieoutEndLabel),
+    tieoutPlugLabel: safeText(s.tieoutPlugLabel),
+    chartTitle: safeText(s.chartTitle),
+    chartSubtitle: safeText(s.chartSubtitle),
+    chartFootnote: safeText(s.chartFootnote),
+    style: {
+      numFormat: safeEnum(style.numFormat, NUM_FORMATS, 'currency'),
+      numScale: safeEnum(String(style.numScale), NUM_SCALES, '1000'),
+      decimals: safeInt(style.decimals, 1, 0, 4),
+      barWidth: safeInt(style.barWidth, 62, 30, 92),
+      cPos: safeColor(style.cPos, '#3a9e65'),
+      cNeg: safeColor(style.cNeg, '#d94535'),
+      cAnchor: safeColor(style.cAnchor, '#1a3a5c'),
+      cSub: safeColor(style.cSub, '#7060aa'),
+      cPlug: safeColor(style.cPlug, '#8a7a6a'),
+      cConn: safeColor(style.cConn, '#b8b4ae'),
+      xRot: safeInt(style.xRot, -30, -90, 0),
+      xFSize: safeInt(style.xFSize, 11, 8, 18),
+      dLSize: safeInt(style.dLSize, 11, 8, 18),
+      yFSize: safeInt(style.yFSize, 10, 8, 16),
+      gFSize: safeInt(style.gFSize, 10, 7, 16),
+      yAxisLabel: safeText(style.yAxisLabel, 120),
+      yMin: safeNumText(style.yMin),
+      yMax: safeNumText(style.yMax),
+      showLabels: safeBool(style.showLabels, true),
+      showConn: safeBool(style.showConn, true),
+      showLegend: safeBool(style.showLegend, true),
+      showGrid: safeBool(style.showGrid, true),
+      showY: safeBool(style.showY, true),
+    }
+  };
+}
+
+function applyState(rawState) {
+  const state = sanitizeState(rawState);
+  rows = state.rows;
 
   // Assign ids to rows from legacy saves (created before rows had stable ids)
   let maxRowId = 0;
   rows.forEach(r => { if (typeof r.id === 'number') maxRowId = Math.max(maxRowId, r.id); });
   rows.forEach(r => { if (typeof r.id !== 'number') r.id = ++maxRowId; });
 
-  groups = (state.groups || []).map(g => {
+  groups = state.groups.map(g => {
     let ids;
     if (g.rowIds) {
       ids = g.rowIds;
@@ -1727,9 +1837,14 @@ function applyState(state) {
     }
     return { id: g.id, label: g.label, color: g.color, rowIds: new Set(ids) };
   });
+  // Group ids are interpolated into inline handlers — guarantee they're numeric
+  let maxGroupId = 0;
+  groups.forEach(g => { if (typeof g.id === 'number') maxGroupId = Math.max(maxGroupId, g.id); });
+  groups.forEach(g => { if (typeof g.id !== 'number') g.id = ++maxGroupId; });
+
   nextRowId = Math.max(maxRowId + 1, state.nextRowId || 1);
-  nextGroupId = state.nextGroupId || (groups.length + 1);
-  tieOutMode = state.tieOutMode ?? true;
+  nextGroupId = Math.max(maxGroupId + 1, state.nextGroupId || 1);
+  tieOutMode = state.tieOutMode;
   plugLabel = state.plugLabel || 'All other, net';
 
   const setVal = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined && v !== null) el.value = v; };
@@ -2041,29 +2156,37 @@ async function renderSavedList() {
     const timeStr = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     const isCurrent = entry.id === currentSaveId;
 
-    // Build card without thumbnail first so it appears immediately
+    // Build card without thumbnail first so it appears immediately.
+    // Handlers are attached as listeners rather than inline attributes so
+    // chart ids are never interpolated into executable markup.
     card.innerHTML = `
-      <div class="saved-thumb saved-thumb-empty" id="thumb-${entry.id}">No preview</div>
+      <div class="saved-thumb saved-thumb-empty">No preview</div>
       <div class="saved-card-body">
         <div class="saved-card-name">${escH(entry.name)}${isCurrent ? ' <span class="saved-current-badge">CURRENT</span>' : ''}</div>
-        <div class="saved-card-meta">Saved ${dateStr} at ${timeStr}</div>
+        <div class="saved-card-meta">Saved ${escH(dateStr)} at ${escH(timeStr)}</div>
       </div>
-      <button class="saved-del" title="Delete" onclick="deleteChart('${entry.id}',event)">×</button>`;
+      <button class="saved-del" title="Delete">×</button>`;
 
+    card.querySelector('.saved-del').addEventListener('click', e => deleteChart(entry.id, e));
     card.addEventListener('click', () => loadChart(entry.id));
     list.appendChild(card);
 
     // Thumbnail: cloud entries carry it inline, local entries load async.
     // Always target the card element — cards aren't attached to the
     // document yet, so getElementById would find nothing (which silently
-    // hid every inline cloud thumbnail).
+    // hid every inline cloud thumbnail). Only base64 image data URLs are
+    // accepted, so a tampered record can't inject another URL scheme.
     const showThumb = (thumb) => {
-      if (!thumb) return;
+      const safe = safeDataImage(thumb);
+      if (!safe) return;
       const el = card.querySelector('.saved-thumb');
-      if (el) {
-        el.className = 'saved-thumb';
-        el.innerHTML = `<img src="${escH(thumb)}" alt="preview">`;
-      }
+      if (!el) return;
+      el.className = 'saved-thumb';
+      el.innerHTML = '';
+      const img = document.createElement('img');
+      img.alt = 'preview';
+      img.src = safe;
+      el.appendChild(img);
     };
     if (entry.thumbnail) showThumb(entry.thumbnail);
     else dataAPI().thumb(entry.id).then(showThumb).catch(() => {});
@@ -2119,6 +2242,8 @@ function renderGroups() {
   const rowById = new Map(rows.map(r => [r.id, r]));
 
   groups.forEach(group => {
+    // Ids are interpolated into inline handlers — force numeric
+    const gid = Number(group.id);
     const card = document.createElement('div');
     card.className = 'group-card';
 
@@ -2140,19 +2265,19 @@ function renderGroups() {
 
     card.innerHTML = `
       <div class="group-header">
-        <div class="group-color-dot" id="gdot-${group.id}" style="background:${group.color}" title="Change color"
-          onclick="openGroupPicker(${group.id},this)"></div>
+        <div class="group-color-dot" id="gdot-${gid}" style="background:${safeColor(group.color)}" title="Change color"
+          onclick="openGroupPicker(${gid},this)"></div>
         <input class="group-name-input" value="${escH(group.label)}"
-          oninput="onGroupLabelInput(${group.id},this.value)">
-        <button class="group-del" onclick="removeGroup(${group.id})">×</button>
+          oninput="onGroupLabelInput(${gid},this.value)">
+        <button class="group-del" onclick="removeGroup(${gid})">×</button>
       </div>
       <div class="group-body">
-        <div class="group-row-list" id="grl-${group.id}"></div>
+        <div class="group-row-list" id="grl-${gid}"></div>
       </div>`;
 
     container.appendChild(card);
 
-    const rowList = card.querySelector(`#grl-${group.id}`);
+    const rowList = card.querySelector('.group-row-list');
 
     const hasAnyEligible = eligibleRows.length > 0 || tieOutMode;
     if (!hasAnyEligible) {
@@ -2160,13 +2285,14 @@ function renderGroups() {
     } else {
       // Regular rows first
       eligibleRows.forEach(r => {
+        const rid = Number(r.id);
         const item = document.createElement('div');
         item.className = 'group-row-item';
         const checked = group.rowIds.has(r.id) ? 'checked' : '';
         item.innerHTML = `
-          <input type="checkbox" id="grp${group.id}-row${r.id}" ${checked}
-            onchange="toggleGroupRow(${group.id},${r.id},this.checked)">
-          <label for="grp${group.id}-row${r.id}">${escH(r.label)}</label>`;
+          <input type="checkbox" id="grp${gid}-row${rid}" ${checked}
+            onchange="toggleGroupRow(${gid},${rid},this.checked)">
+          <label for="grp${gid}-row${rid}">${escH(r.label)}</label>`;
         rowList.appendChild(item);
       });
       // Plug bar row last (matches its position at the end of the chart)
@@ -2176,9 +2302,9 @@ function renderGroups() {
         item.className = 'group-row-item';
         const checked = group.rowIds.has(-1) ? 'checked' : '';
         item.innerHTML = `
-          <input type="checkbox" id="grp${group.id}-plug" ${checked}
-            onchange="toggleGroupRow(${group.id},-1,this.checked)">
-          <label for="grp${group.id}-plug" style="font-style:italic">${escH(plugLabel_)}</label>`;
+          <input type="checkbox" id="grp${gid}-plug" ${checked}
+            onchange="toggleGroupRow(${gid},-1,this.checked)">
+          <label for="grp${gid}-plug" style="font-style:italic">${escH(plugLabel_)}</label>`;
         rowList.appendChild(item);
       }
     }
@@ -2841,7 +2967,7 @@ function updateLegend() {
   const items = legendItems(compute());
   row.innerHTML = items.map(([label, color]) =>
     `<div class="legend-item">
-      <div class="legend-swatch" style="background:${color}"></div>
+      <div class="legend-swatch" style="background:${safeColor(color)}"></div>
       <span>${escH(label)}</span>
     </div>`
   ).join('');
