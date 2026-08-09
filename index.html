@@ -2053,19 +2053,20 @@ async function renderSavedList() {
     card.addEventListener('click', () => loadChart(entry.id));
     list.appendChild(card);
 
-    // Thumbnail: cloud entries carry it inline; local entries load it async
-    ;(async (id, inline) => {
-      try {
-        const thumb = inline || await dataAPI().thumb(id);
-        if (thumb) {
-          const el = document.getElementById('thumb-' + id);
-          if (el) {
-            el.className = 'saved-thumb';
-            el.innerHTML = `<img src="${thumb}" alt="preview">`;
-          }
-        }
-      } catch(e) {}
-    })(entry.id, entry.thumbnail);
+    // Thumbnail: cloud entries carry it inline, local entries load async.
+    // Always target the card element — cards aren't attached to the
+    // document yet, so getElementById would find nothing (which silently
+    // hid every inline cloud thumbnail).
+    const showThumb = (thumb) => {
+      if (!thumb) return;
+      const el = card.querySelector('.saved-thumb');
+      if (el) {
+        el.className = 'saved-thumb';
+        el.innerHTML = `<img src="${escH(thumb)}" alt="preview">`;
+      }
+    };
+    if (entry.thumbnail) showThumb(entry.thumbnail);
+    else dataAPI().thumb(entry.id).then(showThumb).catch(() => {});
   }
 
   container.appendChild(list);
