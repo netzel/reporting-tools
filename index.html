@@ -3098,8 +3098,12 @@ async function apiFetch(path, opts = {}) {
     throw new Error('Your session expired — please sign in again.');
   }
   if (!r.ok) {
-    let msg = 'Request failed (' + r.status + ')';
-    try { const j = await r.json(); if (j.error) msg = j.error; } catch (e) {}
+    // Surface exactly what came back: server JSON error if present,
+    // otherwise status + a snippet of the body (identifies platform 404s etc.)
+    let msg;
+    const text = await r.text();
+    try { msg = JSON.parse(text).error; } catch (e) {}
+    if (!msg) msg = 'HTTP ' + r.status + ' from ' + path + (text ? ' — ' + text.slice(0, 140) : '');
     throw new Error(msg);
   }
   return r.status === 204 ? null : r.json();
