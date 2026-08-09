@@ -2002,6 +2002,7 @@ async function renderSavedList() {
   if (!index.length) {
     const where = authUser ? 'No charts in your account yet.' : 'No saved charts yet.';
     container.innerHTML = '<div class="saved-empty">' + where + '<br>Click <strong>Save</strong> in the top bar to save your current chart.</div>';
+    appendLocalImportButton(container);
     return;
   }
 
@@ -2048,6 +2049,22 @@ async function renderSavedList() {
   }
 
   container.appendChild(list);
+  appendLocalImportButton(container);
+}
+
+// When signed in with charts still sitting in this browser's localStorage,
+// offer a manual way to copy them up (the automatic prompt only fires once).
+async function appendLocalImportButton(container) {
+  if (!authUser) return;
+  try {
+    const localCharts = await localData.list();
+    if (!localCharts.length) return;
+    const btn = document.createElement('button');
+    btn.className = 'add-group-btn';
+    btn.textContent = `⇪ Copy ${localCharts.length} local chart(s) to this account`;
+    btn.onclick = () => offerLocalImport(true);
+    container.appendChild(btn);
+  } catch (e) {}
 }
 
 // ══════════════════════════════════════════
@@ -2964,7 +2981,12 @@ async function initAuth() {
     authClient = null; authUser = null;
   }
   renderAuthUI();
-  if (authUser) renderSavedList();
+  if (authUser) {
+    renderSavedList();
+    // Google OAuth returns via a full-page redirect, so the sign-in handler
+    // never runs — make the local-import offer here too (once per user).
+    offerLocalImport(false);
+  }
 }
 
 function renderAuthUI() {
@@ -3068,27 +3090,57 @@ async function onSignedIn() {
   closeAuthModal();
   renderAuthUI();
   if (!authUser) return;
-  // One-time offer: copy locally saved charts into the account
+  await offerLocalImport(false);
+  renderSavedList();
+}
+
+// Copy locally saved charts into the signed-in account.
+// auto-offer runs once per user (Google OAuth returns via a full-page
+// redirect, so this is also called from initAuth); force=true (the button
+// on the Saved tab) always asks.
+async function offerLocalImport(force) {
+  if (!authUser) return;
+  const offeredKey = 'wf_import_offered_' + (authUser.id || authUser.email || 'x');
+  if (!force && localStorage.getItem(offeredKey)) return;
   try {
     const localCharts = await localData.list();
-    if (localCharts.length && confirm(`Copy ${localCharts.length} locally saved chart(s) to your account?`)) {
-      for (const entry of localCharts) {
+    if (!localCharts.length) return;
+    localStorage.setItem(offeredKey, '1');
+    if (!confirm(`Copy ${localCharts.length} locally saved chart(s) to your account?`)) return;
+    const failed = [];
+    for (const entry of localCharts) {
+      try {
         const state = await localData.get(entry.id);
         if (!state) continue;
         const thumb = await localData.thumb(entry.id);
         await cloudData.save(entry.id, entry.name, state, thumb);
-      }
+      } catch (e) { failed.push(`${entry.name}: ${e.message}`); }
     }
+    if (failed.length) alert('Some local charts could not be copied:\n' + failed.join('\n'));
+    renderSavedList();
   } catch (e) {
     console.warn('Local chart import failed:', e);
-    alert('Some local charts could not be copied to your account: ' + e.message);
+    alert('Could not copy local charts: ' + e.message);
   }
-  renderSavedList();
 }
 
-// Authenticated fetch against our own /api endpoints (bearer JWT from Neon Auth)
+// Token for our API: read it from the session. The SDK's onSuccess hook
+// swaps session.token for a real JWT (set-auth-jwt header) when available.
+// NOTE: do NOT call authClient.getJWTToken() — better-auth clients are
+// dynamic proxies, and an unknown method name becomes a literal HTTP call
+// (GET /get-j-w-t-token → 404 on the auth server).
+async function getAuthToken() {
+  const s = await authClient.getSession();
+  return s?.data?.session?.token || null;
+}
+
+// Authenticated fetch against our own /api endpoints (bearer token from Neon Auth)
 async function apiFetch(path, opts = {}) {
-  const token = await authClient.getJWTToken();
+  const token = await getAuthToken();
+  if (!token) {
+    authUser = null; renderAuthUI();
+    throw new Error('Your session expired — please sign in again.');
+  }
   const r = await fetch(path, {
     ...opts,
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token, ...(opts.headers || {}) },
